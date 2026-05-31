@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Net Logger</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/tabler-icons.min.css" />
+<style>
+:root{--nc-green:#1D9E75;--nc-green-light:#E1F5EE;--nc-green-dark:#085041;--nc-amber:#BA7517;--nc-amber-light:#FAEEDA;--nc-red:#A32D2D;--nc-red-light:#FCEBEB;--nc-blue:#185FA5;--nc-blue-light:#E6F1FB;--bg:#f4f4f0;--surface:#fff;--border:#e2e2de;--text:#1a1a18;--muted:#6b6b68;--radius:8px;--radius-lg:12px;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:var(--text);background:var(--bg);min-height:100vh;}
+.hidden{display:none!important;}
+
+/* LOGIN */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem;}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2rem;width:100%;max-width:380px;}
+.login-logo{display:flex;align-items:center;gap:10px;margin-bottom:1.5rem;}
+.login-logo i{font-size:28px;color:var(--nc-green);}
+.login-logo h1{font-size:20px;font-weight:600;}
+.login-logo span{font-size:12px;color:var(--muted);display:block;}
+.form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
+.form-group label{font-size:12px;font-weight:500;color:var(--muted);}
+.form-group select,.form-group input{height:38px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);padding:0 12px;font-size:14px;width:100%;}
+.form-group select:focus,.form-group input:focus{outline:none;border-color:var(--nc-green);box-shadow:0 0 0 3px rgba(29,158,117,.12);}
+.login-err{font-size:13px;color:var(--nc-red);margin-bottom:12px;min-height:18px;}
+
+/* LAYOUT */
+.app-wrap{display:flex;flex-direction:column;min-height:100vh;}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+.topbar-left{display:flex;align-items:center;gap:12px;}
+.topbar-left i{font-size:20px;color:var(--nc-green);}
+.topbar-title{font-size:15px;font-weight:600;}
+.topbar-net{font-size:12px;color:var(--muted);}
+.topbar-right{display:flex;align-items:center;gap:10px;}
+.user-badge{font-size:12px;font-weight:500;padding:4px 10px;border-radius:var(--radius);background:var(--nc-green-light);color:var(--nc-green-dark);display:flex;align-items:center;gap:5px;}
+.role-badge{font-size:11px;padding:2px 8px;border-radius:var(--radius);font-weight:500;}
+.role-netcontrol{background:#E1F5EE;color:#085041;}
+.role-backup{background:#E6F1FB;color:#0C447C;}
+.role-observer{background:#F1EFE8;color:#444441;}
+.status-badge{font-size:11px;font-weight:500;padding:4px 10px;border-radius:var(--radius);display:flex;align-items:center;gap:5px;}
+.status-badge.open{background:var(--nc-green-light);color:var(--nc-green-dark);}
+.status-badge.closed{background:var(--nc-red-light);color:var(--nc-red);}
+.sdot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+
+.main{display:flex;flex:1;}
+.sidebar{width:200px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:1rem 0;}
+.nav-item{display:flex;align-items:center;gap:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--muted);border-left:3px solid transparent;transition:all .1s;}
+.nav-item:hover{background:var(--bg);color:var(--text);}
+.nav-item.active{background:var(--nc-green-light);color:var(--nc-green-dark);border-left-color:var(--nc-green);font-weight:500;}
+.nav-item i{font-size:16px;}
+.nav-section{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:12px 16px 4px;}
+
+.content{flex:1;padding:1.5rem;overflow-y:auto;max-width:1000px;}
+.page{display:none;}
+.page.active{display:block;}
+
+/* PANELS */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem;}
+.panel-title{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:1rem;display:flex;align-items:center;gap:6px;}
+.panel-title i{font-size:14px;}
+
+/* BUTTONS */
+.btn{height:34px;padding:0 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:background .1s;white-space:nowrap;}
+.btn:hover{background:#e8e8e4;}
+.btn:active{transform:scale(.98);}
+.btn.primary{background:var(--nc-green);color:#fff;border-color:var(--nc-green-dark);}
+.btn.primary:hover{background:var(--nc-green-dark);}
+.btn.danger{background:var(--nc-red-light);color:var(--nc-red);border-color:var(--nc-red);}
+.btn.danger:hover{background:var(--nc-red);color:#fff;}
+.btn.amber{background:var(--nc-amber-light);color:var(--nc-amber);border-color:var(--nc-amber);}
+.btn.sm{height:28px;padding:0 10px;font-size:12px;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:1rem;}
+
+/* FORMS */
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;}
+.form-group.span2{grid-column:span 2;}
+input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);cursor:pointer;}
+
+/* CHECKIN FORM */
+.ci-grid{display:grid;grid-template-columns:130px 1fr 120px 90px;gap:12px;align-items:end;margin-bottom:12px;}
+.qrz-hint{font-size:11px;margin-top:3px;min-height:15px;}
+.qrz-hint.ok{color:var(--nc-green-dark);}
+.qrz-hint.err{color:var(--nc-red);}
+.usng-row{background:var(--nc-blue-light);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.usng-coord{font-family:monospace;font-size:14px;font-weight:600;color:var(--nc-blue);}
+.usng-meta{font-size:11px;color:#0C447C;}
+.sec-div{border-top:1px solid var(--border);padding-top:10px;margin:12px 0 8px;font-size:12px;font-weight:500;color:var(--muted);display:flex;align-items:center;gap:6px;}
+.sec-div i{font-size:13px;}
+.toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.toggle-row label{font-size:13px;cursor:pointer;}
+.sub-indent{padding-left:22px;margin-bottom:10px;}
+.traffic-item{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:6px;display:grid;grid-template-columns:95px 130px 1fr 100px;gap:8px;align-items:center;}
+.traffic-item select,.traffic-item input{height:28px;font-size:12px;border-radius:var(--radius);border:1px solid var(--border);background:#fff;padding:0 8px;color:var(--text);}
+
+/* LIVE LIST */
+.live-row{display:grid;grid-template-columns:95px 1fr 65px 155px 80px 32px;gap:8px;align-items:center;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:6px;background:var(--surface);}
+.live-row.newest{border-color:var(--nc-green);border-width:1.5px;}
+.call-mono{font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.03em;}
+.seq-label{font-size:10px;color:var(--muted);}
+.ci-name-cell{font-size:13px;}
+.ci-class-cell{font-size:11px;color:var(--muted);}
+.ci-time-cell{font-size:12px;color:var(--muted);font-family:monospace;}
+.usng-pill{font-size:10px;font-family:monospace;color:var(--nc-blue);background:var(--nc-blue-light);padding:2px 6px;border-radius:var(--radius);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;display:block;}
+.flag{font-size:10px;padding:2px 6px;border-radius:var(--radius);font-weight:500;}
+.flag.ann{background:var(--nc-blue-light);color:var(--nc-blue);}
+.flag.traf{background:var(--nc-amber-light);color:var(--nc-amber);}
+.flags-cell{display:flex;gap:3px;flex-wrap:wrap;}
+
+/* LOG TABLE */
+.log-wrap{overflow-x:auto;}
+.log-table{width:100%;border-collapse:collapse;font-size:12px;}
+.log-table th{text-align:left;padding:6px 8px;font-size:11px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+.log-table td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+.log-table tr:last-child td{border-bottom:none;}
+.log-table tr:hover td{background:var(--bg);}
+
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:1rem;}
+.stat-card{background:var(--bg);border-radius:var(--radius);padding:10px 14px;}
+.stat-label{font-size:11px;color:var(--muted);margin-bottom:3px;}
+.stat-val{font-size:24px;font-weight:600;}
+
+/* ADMIN TABLE */
+.admin-table{width:100%;border-collapse:collapse;font-size:13px;}
+.admin-table th{text-align:left;padding:8px 10px;font-size:11px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.04em;}
+.admin-table td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.admin-table tr:last-child td{border-bottom:none;}
+
+.empty-state{text-align:center;padding:2.5rem;color:var(--muted);font-size:13px;}
+.empty-state i{font-size:32px;display:block;margin-bottom:8px;opacity:.35;}
+
+@media(max-width:700px){
+  .sidebar{display:none;}
+  .ci-grid{grid-template-columns:1fr 1fr;}
+  .live-row{grid-template-columns:1fr 1fr;}
+  .traffic-item{grid-template-columns:1fr 1fr;}
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">
+      <i class="ti ti-radio"></i>
+      <div><h1>Net Logger</h1><span>Amateur Radio Net Control System</span></div>
+    </div>
+    <div class="form-group">
+      <label>Select callsign</label>
+      <select id="login-callsign"><option value="">-- Select your callsign --</option></select>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="Your password" onkeydown="if(event.key==='Enter')doLogin()" />
+    </div>
+    <div class="login-err" id="login-err"></div>
+    <button class="btn primary" style="width:100%;justify-content:center" onclick="doLogin()"><i class="ti ti-login"></i> Sign in</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-screen" class="app-wrap hidden">
+  <div class="topbar">
+    <div class="topbar-left">
+      <i class="ti ti-radio"></i>
+      <div>
+        <div class="topbar-title">Net Logger</div>
+        <div class="topbar-net" id="topbar-net">No active net</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="status-badge closed" id="net-status-badge"><span class="sdot"></span><span id="net-status-text">NET CLOSED</span></span>
+      <span class="user-badge" id="user-badge-call"><i class="ti ti-user" style="font-size:13px"></i> --</span>
+      <span class="role-badge" id="user-badge-role">--</span>
+      <button class="btn sm" onclick="doLogout()"><i class="ti ti-logout" style="font-size:13px"></i> Sign out</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="sidebar">
+      <div class="nav-section">Net</div>
+      <div class="nav-item active" onclick="showPage('setup')" id="nav-setup"><i class="ti ti-settings"></i> Setup</div>
+      <div class="nav-item" onclick="showPage('checkin')" id="nav-checkin"><i class="ti ti-user-plus"></i> Check-ins</div>
+      <div class="nav-item" onclick="showPage('log')" id="nav-log"><i class="ti ti-list"></i> Log</div>
+      <div class="nav-item" onclick="showPage('export')" id="nav-export"><i class="ti ti-download"></i> Export</div>
+      <div class="nav-section">Admin</div>
+      <div class="nav-item" onclick="showPage('admin')" id="nav-admin"><i class="ti ti-users"></i> Users</div>
+    </div>
+    <div class="content">
+
+      <!-- SETUP PAGE -->
+      <div class="page active" id="page-setup">
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-key"></i> QRZ XML login</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <div class="form-group" style="min-width:160px;flex:1"><label>QRZ username</label><input type="text" id="qrz-user" placeholder="Your callsign" /></div>
+            <div class="form-group" style="min-width:160px;flex:1"><label>QRZ password</label><input type="password" id="qrz-pass" placeholder="Password" /></div>
+            <button class="btn" onclick="testQRZ()" style="margin-bottom:14px"><i class="ti ti-plug"></i> Connect</button>
+          </div>
+          <div id="qrz-status" style="font-size:12px;margin-top:-8px"></div>
+        </div>
+        <div class="panel" id="net-setup-panel">
+          <div class="panel-title"><i class="ti ti-broadcast"></i> Net information</div>
+          <div class="form-grid" id="net-form">
+            <div class="form-group span2"><label>Net name</label><input type="text" id="net-name" placeholder="e.g. Clay County ARES Net" /></div>
+            <div class="form-group"><label>Net control callsign</label><input type="text" id="nc-call" placeholder="e.g. W4SRX" oninput="this.value=this.value.toUpperCase()" /></div>
+            <div class="form-group"><label>Backup net control</label><input type="text" id="bnc-call" placeholder="Optional" oninput="this.value=this.value.toUpperCase()" /></div>
+            <div class="form-group"><label>Frequency (MHz)</label><input type="text" id="net-freq" placeholder="146.820" /></div>
+            <div class="form-group"><label>Mode</label>
+              <select id="net-mode"><option>FM</option><option>SSB</option><option>AM</option><option>CW</option><option>Digital</option><option>DMR</option><option>D-STAR</option><option>System Fusion</option></select>
+            </div>
+            <div class="form-group"><label>Net date</label><input type="date" id="net-date" /></div>
+            <div class="form-group"><label>Start time (local)</label><input type="time" id="net-start-time" /></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn primary" id="btn-open-net" onclick="openNet()"><i class="ti ti-player-play"></i> Open net</button>
+            <button class="btn danger" id="btn-close-net" onclick="closeNet()" disabled><i class="ti ti-player-stop"></i> Close net</button>
+            <span id="net-time-display" style="font-size:12px;color:var(--muted);align-self:center"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHECKIN PAGE -->
+      <div class="page" id="page-checkin">
+        <div class="panel" style="border:1.5px dashed var(--border)">
+          <div class="panel-title"><i class="ti ti-user-plus"></i> Add check-in</div>
+          <div class="ci-grid">
+            <div class="form-group">
+              <label>Callsign</label>
+              <input type="text" id="ci-call" placeholder="W4XYZ" oninput="this.value=this.value.toUpperCase();onCallsignInput(this)" autocomplete="off" style="font-family:monospace;font-weight:700;letter-spacing:.04em" />
+              <div class="qrz-hint" id="qrz-hint"></div>
+            </div>
+            <div class="form-group"><label>Name (QRZ)</label><input type="text" id="ci-name" placeholder="Auto-fill" readonly style="background:var(--bg)" /></div>
+            <div class="form-group"><label>License class</label><input type="text" id="ci-class" placeholder="Auto-fill" readonly style="background:var(--bg)" /></div>
+            <div class="form-group"><label>Time in</label><input type="text" id="ci-time" placeholder="HH:MM" /></div>
+          </div>
+          <div id="usng-display" class="hidden usng-row">
+            <i class="ti ti-map-pin" style="font-size:18px;color:var(--nc-blue)"></i>
+            <div>
+              <div style="font-size:11px;color:#0C447C;margin-bottom:2px">USNG coordinate (1m precision)</div>
+              <div class="usng-coord" id="usng-val"></div>
+            </div>
+            <div>
+              <div class="usng-meta" id="usng-addr"></div>
+              <div class="usng-meta" id="usng-latlon"></div>
+            </div>
+          </div>
+
+          <div class="sec-div"><i class="ti ti-message-circle"></i> Comments / announcements</div>
+          <div class="toggle-row"><input type="checkbox" id="ci-has-comments" onchange="toggleSub('comments-sub','ci-has-comments')" /><label for="ci-has-comments">Has comments or announcements</label></div>
+          <div id="comments-sub" class="sub-indent hidden">
+            <div style="display:grid;grid-template-columns:80px 1fr;gap:10px;align-items:end">
+              <div class="form-group"><label>Count</label><input type="number" id="ci-comment-count" min="1" max="99" value="1" style="width:70px" /></div>
+              <div class="form-group"><label>Notes</label><input type="text" id="ci-comment-notes" placeholder="Brief description" /></div>
+            </div>
+          </div>
+
+          <div class="sec-div"><i class="ti ti-mail-forward"></i> Message traffic</div>
+          <div class="toggle-row"><input type="checkbox" id="ci-has-traffic" onchange="toggleSub('traffic-sub','ci-has-traffic')" /><label for="ci-has-traffic">Has message traffic</label></div>
+          <div id="traffic-sub" class="sub-indent hidden">
+            <div id="traffic-list"></div>
+            <button class="btn sm" onclick="addTrafficRow()" style="margin-top:4px"><i class="ti ti-plus"></i> Add message</button>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn primary" onclick="addCheckin()"><i class="ti ti-check"></i> Log check-in</button>
+            <button class="btn" onclick="clearCI()"><i class="ti ti-x"></i> Clear</button>
+          </div>
+        </div>
+        <div id="live-list" style="margin-top:1rem"></div>
+      </div>
+
+      <!-- LOG PAGE -->
+      <div class="page" id="page-log">
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card"><div class="stat-label">Check-ins</div><div class="stat-val" id="s-checkins">0</div></div>
+          <div class="stat-card"><div class="stat-label">With traffic</div><div class="stat-val" id="s-traffic">0</div></div>
+          <div class="stat-card"><div class="stat-label">With comments</div><div class="stat-val" id="s-comments">0</div></div>
+          <div class="stat-card"><div class="stat-label">USNG coords</div><div class="stat-val" id="s-usng">0</div></div>
+          <div class="stat-card"><div class="stat-label">Duration</div><div class="stat-val" id="s-dur">--</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-list"></i> Full check-in log</div>
+          <div id="log-container"><div class="empty-state"><i class="ti ti-radio"></i>No check-ins yet</div></div>
+        </div>
+      </div>
+
+      <!-- EXPORT PAGE -->
+      <div class="page" id="page-export">
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-download"></i> Export net log</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Exports include all check-ins, USNG coordinates, lat/lon, comments, and traffic.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn primary" onclick="exportCSV()"><i class="ti ti-file-spreadsheet"></i> Export CSV</button>
+            <button class="btn amber" onclick="exportPDF()"><i class="ti ti-file-text"></i> Export PDF</button>
+          </div>
+        </div>
+        <div class="panel hidden" id="pdf-preview-panel">
+          <div class="panel-title"><i class="ti ti-eye"></i> PDF preview</div>
+          <div id="pdf-preview-body" style="font-size:13px;line-height:1.7"></div>
+        </div>
+      </div>
+
+      <!-- ADMIN PAGE -->
+      <div class="page" id="page-admin">
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-user-plus"></i> Add user</div>
+          <div style="display:grid;grid-template-columns:130px 1fr 1fr 110px auto;gap:10px;align-items:end;flex-wrap:wrap">
+            <div class="form-group"><label>Callsign</label><input type="text" id="new-call" placeholder="W4XYZ" oninput="this.value=this.value.toUpperCase()" /></div>
+            <div class="form-group"><label>Password</label><input type="password" id="new-pass" placeholder="Password" /></div>
+            <div class="form-group"><label>Confirm password</label><input type="password" id="new-pass2" placeholder="Confirm" /></div>
+            <div class="form-group"><label>Role</label>
+              <select id="new-role"><option value="netcontrol">Net Control</option><option value="backup">Backup NC</option><option value="observer">Observer</option></select>
+            </div>
+            <button class="btn primary" onclick="createUser()" style="margin-bottom:14px"><i class="ti ti-plus"></i> Add</button>
+          </div>
+          <div id="user-err" style="font-size:12px;color:var(--nc-red);margin-top:-8px;min-height:16px"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-users"></i> User accounts</div>
+          <div id="user-table-wrap"><div class="empty-state"><i class="ti ti-users"></i>Loading...</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const ROLES = { netcontrol: 'Net Control', backup: 'Backup NC', observer: 'Observer' };
+let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null };
+let msgCount = 0;
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch('/api' + path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+async function boot() {
+  const users = await api('GET', '/users/list');
+  const sel = document.getElementById('login-callsign');
+  users.forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.callsign;
+    opt.textContent = u.callsign + ' (' + ROLES[u.role] + ')';
+    sel.appendChild(opt);
+  });
+  const me = await api('GET', '/auth/me');
+  if (me.authenticated) {
+    appState.user = me;
+    showApp();
+  }
+}
+
+async function doLogin() {
+  const callsign = document.getElementById('login-callsign').value;
+  const password = document.getElementById('login-password').value;
+  document.getElementById('login-err').textContent = '';
+  if (!callsign) { document.getElementById('login-err').textContent = 'Select a callsign.'; return; }
+  if (!password) { document.getElementById('login-err').textContent = 'Enter your password.'; return; }
+  try {
+    const user = await api('POST', '/auth/login', { callsign, password });
+    appState.user = user;
+    showApp();
+  } catch (e) {
+    document.getElementById('login-err').textContent = e.message;
+  }
+}
+
+async function doLogout() {
+  await api('POST', '/auth/logout');
+  clearInterval(appState.pollTimer);
+  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null };
+  document.getElementById('app-screen').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('login-password').value = '';
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-screen').classList.remove('hidden');
+  document.getElementById('user-badge-call').innerHTML = '<i class="ti ti-user" style="font-size:13px"></i> ' + appState.user.callsign;
+  const roleBadge = document.getElementById('user-badge-role');
+  roleBadge.textContent = ROLES[appState.user.role] || appState.user.role;
+  roleBadge.className = 'role-badge role-' + appState.user.role;
+  applyRoleUI();
+  loadCurrentSession();
+  document.getElementById('net-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('ci-time').value = nowTime();
+  document.getElementById('net-start-time').value = nowTime();
+  appState.pollTimer = setInterval(pollSession, 5000);
+}
+
+function applyRoleUI() {
+  const role = appState.user.role;
+  const isNC = role === 'netcontrol';
+  const canEdit = role === 'netcontrol' || role === 'backup';
+  document.getElementById('btn-open-net').disabled = !isNC;
+  document.getElementById('btn-close-net').disabled = !isNC;
+  if (!canEdit) {
+    document.querySelectorAll('.btn.primary').forEach(b => {
+      if (b.id !== 'btn-open-net') b.disabled = true;
+    });
+  }
+  if (!isNC) document.getElementById('nav-admin').style.display = 'none';
+}
+
+async function loadCurrentSession() {
+  try {
+    const data = await api('GET', '/session/current');
+    if (data.active) {
+      appState.session = data.session;
+      appState.checkins = data.checkins;
+      updateSessionUI();
+      renderLiveList();
+      renderLog();
+      updateStats();
+    }
+  } catch (e) {}
+}
+
+async function pollSession() {
+  if (!appState.session) return;
+  try {
+    const data = await api('GET', '/session/current');
+    if (data.active) {
+      appState.checkins = data.checkins;
+      renderLiveList();
+      renderLog();
+      updateStats();
+    }
+  } catch (e) {}
+}
+
+function updateSessionUI() {
+  const s = appState.session;
+  if (!s) return;
+  document.getElementById('topbar-net').textContent = s.net_name + ' · ' + (s.frequency || '') + ' ' + (s.mode || '');
+  const badge = document.getElementById('net-status-badge');
+  const isOpen = s.status === 'open';
+  badge.className = 'status-badge ' + (isOpen ? 'open' : 'closed');
+  document.getElementById('net-status-text').textContent = isOpen ? 'NET OPEN' : 'NET CLOSED';
+  document.getElementById('btn-open-net').disabled = isOpen || appState.user.role !== 'netcontrol';
+  document.getElementById('btn-close-net').disabled = !isOpen || appState.user.role !== 'netcontrol';
+  if (s.opened_at) {
+    const opened = new Date(s.opened_at);
+    document.getElementById('net-time-display').textContent = 'Opened: ' + opened.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (s.net_name) document.getElementById('net-name').value = s.net_name;
+  if (s.frequency) document.getElementById('net-freq').value = s.frequency;
+  if (s.mode) document.getElementById('net-mode').value = s.mode;
+  if (s.net_date) document.getElementById('net-date').value = s.net_date;
+  if (s.nc_callsign) document.getElementById('nc-call').value = s.nc_callsign;
+  if (s.bnc_callsign) document.getElementById('bnc-call').value = s.bnc_callsign;
+}
+
+async function openNet() {
+  const name = document.getElementById('net-name').value.trim();
+  if (!name) { alert('Enter a net name.'); return; }
+  try {
+    const data = await api('POST', '/session/open', {
+      net_name: name, frequency: document.getElementById('net-freq').value,
+      mode: document.getElementById('net-mode').value, net_date: document.getElementById('net-date').value,
+      start_time: document.getElementById('net-start-time').value,
+      nc_callsign: document.getElementById('nc-call').value,
+      bnc_callsign: document.getElementById('bnc-call').value
+    });
+    appState.session = data.session;
+    appState.checkins = [];
+    updateSessionUI();
+    showPage('checkin');
+  } catch (e) { alert(e.message); }
+}
+
+async function closeNet() {
+  if (!confirm('Close the net? The log stays available for export.')) return;
+  try {
+    await api('POST', '/session/close');
+    appState.session.status = 'closed';
+    updateSessionUI();
+    showPage('log');
+  } catch (e) { alert(e.message); }
+}
+
+async function testQRZ() {
+  const user = document.getElementById('qrz-user').value.trim();
+  const pass = document.getElementById('qrz-pass').value.trim();
+  const el = document.getElementById('qrz-status');
+  if (!user || !pass) { el.style.color = 'var(--nc-red)'; el.textContent = 'Enter username and password.'; return; }
+  el.style.color = 'var(--muted)'; el.textContent = 'Connecting...';
+  appState.qrzUser = user; appState.qrzPass = pass;
+  const session = await getQRZSession();
+  if (session) { appState.qrzSession = session; el.style.color = 'var(--nc-green)'; el.textContent = '✓ Connected to QRZ XML.'; }
+  else { el.style.color = 'var(--nc-red)'; el.textContent = '✗ Could not connect. Check credentials.'; }
+}
+
+async function getQRZSession() {
+  try {
+    const r = await fetch(`https://xmldata.qrz.com/xml/current/?username=${encodeURIComponent(appState.qrzUser)}&password=${encodeURIComponent(appState.qrzPass)}&agent=NetLogger1.0`);
+    const txt = await r.text();
+    const doc = new DOMParser().parseFromString(txt, 'text/xml');
+    const key = doc.querySelector('Key');
+    return key ? key.textContent : null;
+  } catch (e) { return null; }
+}
+
+async function lookupCallsign(call) {
+  if (!call || call.length < 3) return null;
+  if (!appState.qrzSession) { appState.qrzSession = await getQRZSession(); if (!appState.qrzSession) return null; }
+  try {
+    const r = await fetch(`https://xmldata.qrz.com/xml/current/?s=${appState.qrzSession}&callsign=${encodeURIComponent(call)}`);
+    const txt = await r.text();
+    const doc = new DOMParser().parseFromString(txt, 'text/xml');
+    const g = tag => doc.querySelector(tag)?.textContent || '';
+    const fname = g('fname'), lname = g('lname'), cls = g('class');
+    const lat = parseFloat(g('lat')), lon = parseFloat(g('lon'));
+    const addr = g('addr1'), city = g('addr2'), state = g('state'), zip = g('zip');
+    if (!fname && !lname) return null;
+    const res = { name: [fname, lname].filter(Boolean).join(' '), licClass: cls, addr, city, state, zip, lat: isNaN(lat) ? null : lat, lon: isNaN(lon) ? null : lon, usng: null };
+    if (res.lat !== null && res.lon !== null) res.usng = latLonToUSNG(res.lat, res.lon, 5);
+    return res;
+  } catch (e) { return null; }
+}
+
+function latLonToUSNG(lat, lon, precision) {
+  precision = precision || 5;
+  const k0 = 0.9996, a = 6378137, e2 = 0.00669438;
+  const zone = Math.floor((lon + 180) / 6) + 1;
+  const lonRad = lon * Math.PI / 180, latRad = lat * Math.PI / 180;
+  const N = a / Math.sqrt(1 - e2 * Math.sin(latRad) ** 2);
+  const T = Math.tan(latRad) ** 2, C = e2 / (1 - e2) * Math.cos(latRad) ** 2, A = Math.cos(latRad) * (lonRad - (6 * zone - 183) * Math.PI / 180);
+  const M = a * ((1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * latRad - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024) * Math.sin(2 * latRad) + (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024) * Math.sin(4 * latRad) - (35 * e2 ** 3 / 3072) * Math.sin(6 * latRad));
+  let x = k0 * N * (A + (1 - T + C) * A ** 3 / 6 + (5 - 18 * T + T ** 2 + 72 * C - 58 * (e2 / (1 - e2))) * A ** 5 / 120) + 500000;
+  let y = k0 * (M + N * Math.tan(latRad) * (A ** 2 / 2 + (5 - T + 9 * C + 4 * C ** 2) * A ** 4 / 24 + (61 - 58 * T + T ** 2 + 600 * C - 330 * (e2 / (1 - e2))) * A ** 6 / 720));
+  if (lat < 0) y += 10000000;
+  const letters = 'CDEFGHJKLMNPQRSTUVWX';
+  const latBand = letters[Math.floor((lat + 80) / 8)];
+  const e100k = Math.floor(x / 100000), n100k = Math.floor(y / 100000) % 20;
+  const eLett = 'ABCDEFGHJKLMNPQRSTUVWXYZ'[(((zone - 1) % 3) * 8) + (e100k - 1)];
+  const nSet = (zone - 1) % 2;
+  const nLetters = nSet === 0 ? 'ABCDEFGHJKLMNPQRSTUV' : 'FGHJKLMNPQRSTUVABCDE';
+  const nLett = nLetters[n100k];
+  const mul = Math.pow(10, 5 - precision);
+  const eStr = String(Math.floor((x % 100000) / mul)).padStart(precision, '0');
+  const nStr = String(Math.floor((y % 100000) / mul)).padStart(precision, '0');
+  return zone + latBand + ' ' + eLett + nLett + ' ' + eStr + ' ' + nStr;
+}
+
+let qrzTimer = null;
+function onCallsignInput(el) {
+  clearTimeout(qrzTimer);
+  const call = el.value.trim();
+  ['ci-name', 'ci-class'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('usng-display').classList.add('hidden');
+  const hint = document.getElementById('qrz-hint');
+  el._qrzInfo = null;
+  if (call.length < 3) { hint.textContent = ''; return; }
+  hint.className = 'qrz-hint'; hint.textContent = 'Looking up...';
+  qrzTimer = setTimeout(async () => {
+    const info = await lookupCallsign(call);
+    if (info) {
+      document.getElementById('ci-name').value = info.name;
+      document.getElementById('ci-class').value = info.licClass;
+      hint.className = 'qrz-hint ok'; hint.textContent = '✓ ' + info.name + (info.licClass ? ' · ' + info.licClass : '');
+      el._qrzInfo = info;
+      if (info.usng) {
+        document.getElementById('usng-val').textContent = info.usng;
+        document.getElementById('usng-addr').textContent = [info.addr, info.city, info.state, info.zip].filter(Boolean).join(', ');
+        document.getElementById('usng-latlon').textContent = info.lat.toFixed(5) + '°, ' + info.lon.toFixed(5) + '°';
+        document.getElementById('usng-display').classList.remove('hidden');
+      }
+    } else {
+      hint.className = 'qrz-hint err'; hint.textContent = '✗ Not found in QRZ';
+    }
+  }, 500);
+}
+
+function toggleSub(subId, cbId) {
+  document.getElementById(subId).classList.toggle('hidden', !document.getElementById(cbId).checked);
+}
+
+function addTrafficRow() {
+  msgCount++;
+  const id = 'tmsg-' + msgCount;
+  const div = document.createElement('div');
+  div.className = 'traffic-item'; div.id = id;
+  div.innerHTML = `<select class="msg-prec"><option>Routine</option><option>Priority</option><option>Welfare</option><option>Emergency</option></select><select class="msg-type"><option>Formal</option><option>Informal</option><option>Health & Welfare</option></select><input type="text" class="msg-to" placeholder="Deliver to..." /><div style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="msg-passed" /><label style="font-size:11px;color:var(--muted)">Passed</label><button class="btn sm" onclick="document.getElementById('${id}').remove()" style="padding:0 8px"><i class="ti ti-x"></i></button></div>`;
+  document.getElementById('traffic-list').appendChild(div);
+}
+
+function getTrafficRows() {
+  return Array.from(document.querySelectorAll('#traffic-list .traffic-item')).map(d => ({
+    precedence: d.querySelector('.msg-prec').value,
+    type: d.querySelector('.msg-type').value,
+    to: d.querySelector('.msg-to').value,
+    passed: d.querySelector('.msg-passed').checked
+  }));
+}
+
+async function addCheckin() {
+  const callEl = document.getElementById('ci-call');
+  const call = callEl.value.trim().toUpperCase();
+  if (!call) { alert('Enter a callsign.'); return; }
+  if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
+  const info = callEl._qrzInfo || {};
+  const hasComments = document.getElementById('ci-has-comments').checked;
+  const hasTraffic = document.getElementById('ci-has-traffic').checked;
+  try {
+    const ci = await api('POST', '/checkin', {
+      callsign: call,
+      name: document.getElementById('ci-name').value,
+      license_class: document.getElementById('ci-class').value,
+      time_in: document.getElementById('ci-time').value || nowTime(),
+      has_comments: hasComments,
+      comment_count: hasComments ? parseInt(document.getElementById('ci-comment-count').value) || 1 : 0,
+      comment_notes: hasComments ? document.getElementById('ci-comment-notes').value : '',
+      has_traffic: hasTraffic,
+      lat: info.lat || null, lon: info.lon || null, usng: info.usng || null,
+      address: [info.addr, info.city, info.state, info.zip].filter(Boolean).join(', '),
+      traffic: hasTraffic ? getTrafficRows() : []
+    });
+    appState.checkins.push(ci);
+    clearCI(); renderLiveList(); renderLog(); updateStats();
+    document.getElementById('ci-call').focus();
+  } catch (e) { alert(e.message); }
+}
+
+async function removeCheckin(id) {
+  const ci = appState.checkins.find(c => c.id === id);
+  if (!ci || !confirm('Remove ' + ci.callsign + ' from the log?')) return;
+  try {
+    await api('DELETE', '/checkin/' + id);
+    await loadCurrentSession();
+  } catch (e) { alert(e.message); }
+}
+
+function clearCI() {
+  const el = document.getElementById('ci-call');
+  el.value = ''; el._qrzInfo = null;
+  ['ci-name', 'ci-class'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('ci-time').value = nowTime();
+  document.getElementById('ci-has-comments').checked = false;
+  document.getElementById('comments-sub').classList.add('hidden');
+  document.getElementById('ci-comment-count').value = '1';
+  document.getElementById('ci-comment-notes').value = '';
+  document.getElementById('ci-has-traffic').checked = false;
+  document.getElementById('traffic-sub').classList.add('hidden');
+  document.getElementById('traffic-list').innerHTML = '';
+  document.getElementById('qrz-hint').textContent = '';
+  document.getElementById('usng-display').classList.add('hidden');
+  msgCount = 0;
+}
+
+function renderLiveList() {
+  const el = document.getElementById('live-list');
+  const recent = appState.checkins.slice().reverse().slice(0, 10);
+  if (!recent.length) { el.innerHTML = ''; return; }
+  el.innerHTML = recent.map((ci, i) => {
+    const isNew = i === 0;
+    const flags = [(ci.has_comments ? `<span class="flag ann">${ci.comment_count} ann.</span>` : ''), ...((ci.traffic || []).map(t => `<span class="flag traf">${t.precedence}</span>`))].filter(Boolean).join('');
+    return `<div class="live-row ${isNew ? 'newest' : ''}">
+      <div><div class="call-mono">${ci.callsign}</div><div class="seq-label">#${ci.seq}</div></div>
+      <div><div class="ci-name-cell">${ci.name || '<span style="color:var(--muted)">Unknown</span>'}</div><div class="ci-class-cell">${ci.license_class || ''}</div></div>
+      <div class="ci-time-cell">${ci.time_in}</div>
+      <div>${ci.usng ? `<span class="usng-pill" title="${ci.address || ''}">${ci.usng}</span>` : '<span style="font-size:11px;color:var(--muted)">No coord</span>'}</div>
+      <div class="flags-cell">${flags}</div>
+      <button class="btn sm" onclick="removeCheckin(${ci.id})" aria-label="Remove" ${appState.user.role === 'observer' ? 'disabled' : ''}><i class="ti ti-trash"></i></button>
+    </div>`;
+  }).join('');
+}
+
+function renderLog() {
+  const el = document.getElementById('log-container');
+  if (!appState.checkins.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-radio"></i>No check-ins yet</div>'; return; }
+  el.innerHTML = `<div class="log-wrap"><table class="log-table">
+    <thead><tr><th>#</th><th>Callsign</th><th>Name</th><th>Class</th><th>Time</th><th>USNG (1m)</th><th>Logged by</th><th>Comments</th><th>Traffic</th></tr></thead>
+    <tbody>${appState.checkins.map(ci => `<tr>
+      <td style="color:var(--muted)">${ci.seq}</td>
+      <td style="font-family:monospace;font-weight:700">${ci.callsign}</td>
+      <td>${ci.name || ''}</td>
+      <td>${ci.license_class || ''}</td>
+      <td style="font-family:monospace">${ci.time_in}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--nc-blue)">${ci.usng || '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="font-size:11px;color:var(--muted)">${ci.logged_by_callsign || ''}</td>
+      <td style="font-size:12px">${ci.has_comments ? ci.comment_count + (ci.comment_notes ? ' · ' + ci.comment_notes : '') : ''}</td>
+      <td style="font-size:11px">${(ci.traffic || []).map(t => `<div style="margin-bottom:2px"><span style="font-weight:600;color:${t.precedence === 'Emergency' ? 'var(--nc-red)' : t.precedence === 'Priority' ? 'var(--nc-blue)' : t.precedence === 'Welfare' ? 'var(--nc-amber)' : 'var(--nc-green)'}">${t.precedence}</span> · ${t.type} → ${t.deliver_to}${t.passed ? ' <span style="color:var(--nc-green)">✓</span>' : ''}</div>`).join('')}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function updateStats() {
+  const c = appState.checkins;
+  document.getElementById('s-checkins').textContent = c.length;
+  document.getElementById('s-traffic').textContent = c.filter(x => x.has_traffic && (x.traffic || []).length).length;
+  document.getElementById('s-comments').textContent = c.filter(x => x.has_comments).length;
+  document.getElementById('s-usng').textContent = c.filter(x => x.usng).length;
+  if (appState.session?.opened_at) {
+    const end = appState.session.closed_at ? new Date(appState.session.closed_at) : new Date();
+    document.getElementById('s-dur').textContent = Math.round((end - new Date(appState.session.opened_at)) / 60000) + 'm';
+  }
+}
+
+function exportCSV() {
+  const s = appState.session || {};
+  let rows = [['NET LOGGER EXPORT'], ['Net Name', s.net_name || ''], ['Net Control', s.nc_callsign || ''], ['Backup Net Control', s.bnc_callsign || ''], ['Date', s.net_date || ''], ['Frequency', (s.frequency || '') + ' MHz'], ['Mode', s.mode || ''], ['Opened', s.opened_at || ''], ['Closed', s.closed_at || ''], [], ['#', 'Callsign', 'Name', 'License Class', 'Time In', 'USNG (1m)', 'Latitude', 'Longitude', 'Address', 'Logged By', 'Comments', 'Comment Notes', 'Traffic']];
+  appState.checkins.forEach(ci => {
+    const traf = (ci.traffic || []).map(t => t.precedence + '/' + t.type + '/' + t.deliver_to + (t.passed ? '/PASSED' : '')).join(' | ');
+    rows.push([ci.seq, ci.callsign, ci.name, ci.license_class, ci.time_in, ci.usng || '', ci.lat != null ? Number(ci.lat).toFixed(6) : '', ci.lon != null ? Number(ci.lon).toFixed(6) : '', ci.address || '', ci.logged_by_callsign || '', ci.has_comments ? ci.comment_count : '', ci.comment_notes || '', traf]);
+  });
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = (s.net_name || 'net-log').replace(/\s+/g, '-') + '-' + (s.net_date || 'log') + '.csv';
+  a.click();
+}
+
+function exportPDF() {
+  const s = appState.session || {};
+  const dur = s.opened_at && s.closed_at ? Math.round((new Date(s.closed_at) - new Date(s.opened_at)) / 60000) + ' min' : '';
+  const html = `<div style="font-family:sans-serif;font-size:12px;line-height:1.8;max-width:800px">
+    <div style="border-bottom:2px solid #1D9E75;padding-bottom:10px;margin-bottom:14px">
+      <div style="font-size:20px;font-weight:700;margin-bottom:4px">${s.net_name || 'Net Log'}</div>
+      <div style="color:#666">Net Control: ${s.nc_callsign || 'N/A'}${s.bnc_callsign ? ' · Backup: ' + s.bnc_callsign : ''} · ${s.frequency || ''} MHz ${s.mode || ''} · ${s.net_date || ''}</div>
+      <div style="color:#666">Opened: ${s.opened_at ? new Date(s.opened_at).toLocaleString() : 'N/A'} · Closed: ${s.closed_at ? new Date(s.closed_at).toLocaleString() : 'N/A'}${dur ? ' · Duration: ' + dur : ''}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="border-bottom:1px solid #ccc">
+        <th style="text-align:left;padding:4px 6px;color:#666">#</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">Callsign</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">Name</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">Class</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">Time</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">USNG (1m)</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">Logged by</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">Notes / Traffic</th>
+      </tr></thead>
+      <tbody>${appState.checkins.map((ci, i) => {
+        const notes = [];
+        if (ci.has_comments) notes.push(ci.comment_count + ' comment(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : ''));
+        (ci.traffic || []).forEach(t => notes.push('[' + t.precedence + '] ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' (passed)' : '')));
+        return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
+          <td style="padding:4px 6px;color:#999">${ci.seq}</td>
+          <td style="padding:4px 6px;font-weight:700;font-family:monospace">${ci.callsign}</td>
+          <td style="padding:4px 6px">${ci.name || ''}</td>
+          <td style="padding:4px 6px">${ci.license_class || ''}</td>
+          <td style="padding:4px 6px;font-family:monospace">${ci.time_in}</td>
+          <td style="padding:4px 6px;font-family:monospace;color:#185FA5">${ci.usng || '—'}</td>
+          <td style="padding:4px 6px;color:#666">${ci.logged_by_callsign || ''}</td>
+          <td style="padding:4px 6px;color:#555">${notes.join(' · ')}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+    <div style="margin-top:12px;font-size:11px;color:#666;border-top:0.5px solid #ddd;padding-top:8px">
+      Total check-ins: ${appState.checkins.length} · With USNG: ${appState.checkins.filter(c => c.usng).length} · With traffic: ${appState.checkins.filter(c => c.has_traffic).length} · With comments: ${appState.checkins.filter(c => c.has_comments).length}
+    </div>
+    <div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:40px">
+      <div style="border-top:0.5px solid #ccc;padding-top:6px;font-size:11px;color:#666">Net Control: ${s.nc_callsign || '_____________'}</div>
+      <div style="border-top:0.5px solid #ccc;padding-top:6px;font-size:11px;color:#666">Date: ${s.net_date || '_____________'}</div>
+    </div>
+  </div>`;
+  document.getElementById('pdf-preview-body').innerHTML = html;
+  document.getElementById('pdf-preview-panel').classList.remove('hidden');
+  setTimeout(() => window.print(), 300);
+}
+
+async function loadUsers() {
+  try {
+    const users = await api('GET', '/users');
+    const el = document.getElementById('user-table-wrap');
+    if (!users.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-users"></i>No users yet</div>'; return; }
+    el.innerHTML = `<table class="admin-table">
+      <thead><tr><th>Callsign</th><th>Role</th><th>Last login</th><th>Actions</th></tr></thead>
+      <tbody>${users.map(u => `<tr>
+        <td style="font-family:monospace;font-weight:700">${u.callsign}</td>
+        <td><span class="role-badge role-${u.role}">${ROLES[u.role] || u.role}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn sm" onclick="resetPassword(${u.id},'${u.callsign}')"><i class="ti ti-key"></i> Reset pw</button>
+          <button class="btn sm" onclick="changeRole(${u.id},'${u.role}')"><i class="ti ti-refresh"></i> Change role</button>
+          ${u.id !== appState.user?.id ? `<button class="btn sm danger" onclick="deleteUser(${u.id},'${u.callsign}')"><i class="ti ti-trash"></i> Delete</button>` : ''}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } catch (e) {}
+}
+
+async function createUser() {
+  const call = document.getElementById('new-call').value.trim().toUpperCase();
+  const pass = document.getElementById('new-pass').value;
+  const pass2 = document.getElementById('new-pass2').value;
+  const role = document.getElementById('new-role').value;
+  const err = document.getElementById('user-err');
+  if (!call || !pass) { err.textContent = 'Callsign and password required.'; return; }
+  if (pass !== pass2) { err.textContent = 'Passwords do not match.'; return; }
+  try {
+    await api('POST', '/users', { callsign: call, password: pass, role });
+    err.textContent = '';
+    document.getElementById('new-call').value = '';
+    document.getElementById('new-pass').value = '';
+    document.getElementById('new-pass2').value = '';
+    loadUsers();
+    boot();
+  } catch (e) { err.textContent = e.message; }
+}
+
+async function resetPassword(id, call) {
+  const pw = prompt('New password for ' + call + ':');
+  if (!pw) return;
+  try { await api('PUT', '/users/' + id + '/password', { password: pw }); alert('Password updated.'); }
+  catch (e) { alert(e.message); }
+}
+
+async function changeRole(id, current) {
+  const roles = ['netcontrol', 'backup', 'observer'];
+  const labels = ['Net Control', 'Backup NC', 'Observer'];
+  const choice = prompt('New role for user:\n0 = Net Control\n1 = Backup NC\n2 = Observer\nCurrent: ' + (ROLES[current] || current));
+  if (choice === null) return;
+  const role = roles[parseInt(choice)];
+  if (!role) { alert('Invalid choice.'); return; }
+  try { await api('PUT', '/users/' + id + '/role', { role }); loadUsers(); }
+  catch (e) { alert(e.message); }
+}
+
+async function deleteUser(id, call) {
+  if (!confirm('Delete account for ' + call + '? This cannot be undone.')) return;
+  try { await api('DELETE', '/users/' + id); loadUsers(); }
+  catch (e) { alert(e.message); }
+}
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+  if (name === 'log') { renderLog(); updateStats(); }
+  if (name === 'admin') loadUsers();
+}
+
+function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+boot();
+</script>
+</body>
+</html>
