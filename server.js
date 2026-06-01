@@ -63,6 +63,7 @@ app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
     const r = await fetch(url);
     const txt = await r.text();
     const get = tag => { const m = txt.match(new RegExp('<' + tag + '>([^<]*)</' + tag + '>')); return m ? m[1] : ''; };
+    console.log('QRZ RAW RESPONSE:', txt);
     const fname = get('fname');
     const lname = get('lname');
     const cls = get('class');
@@ -72,6 +73,7 @@ app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
     const addr2 = get('addr2');
     const state = get('state');
     const zip = get('zip');
+    console.log('QRZ PARSED:', { fname, lname, cls, lat, lon });
     const errMatch = txt.match(/<Error>([^<]+)<\/Error>/);
     if (!fname && !lname) {
       return res.status(404).json({ error: errMatch ? errMatch[1] : 'Callsign not found' });
