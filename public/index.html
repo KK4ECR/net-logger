@@ -494,37 +494,31 @@ async function testQRZ() {
   if (!user || !pass) { el.style.color = 'var(--nc-red)'; el.textContent = 'Enter username and password.'; return; }
   el.style.color = 'var(--muted)'; el.textContent = 'Connecting...';
   appState.qrzUser = user; appState.qrzPass = pass;
-  const session = await getQRZSession();
-  if (session) { appState.qrzSession = session; el.style.color = 'var(--nc-green)'; el.textContent = '✓ Connected to QRZ XML.'; }
-  else { el.style.color = 'var(--nc-red)'; el.textContent = '✗ Could not connect. Check credentials.'; }
-}
-
-async function getQRZSession() {
   try {
-    const r = await fetch(`https://xmldata.qrz.com/xml/current/?username=${encodeURIComponent(appState.qrzUser)}&password=${encodeURIComponent(appState.qrzPass)}&agent=NetLogger1.0`);
-    const txt = await r.text();
-    const doc = new DOMParser().parseFromString(txt, 'text/xml');
-    const key = doc.querySelector('Key');
-    return key ? key.textContent : null;
-  } catch (e) { return null; }
+    const data = await api('POST', '/qrz/session', { username: user, password: pass });
+    appState.qrzSession = data.key;
+    el.style.color = 'var(--nc-green)'; el.textContent = '\u2713 Connected to QRZ XML.';
+  } catch(e) {
+    el.style.color = 'var(--nc-red)'; el.textContent = '\u2717 ' + e.message;
+  }
 }
 
 async function lookupCallsign(call) {
   if (!call || call.length < 3) return null;
-  if (!appState.qrzSession) { appState.qrzSession = await getQRZSession(); if (!appState.qrzSession) return null; }
+  if (!appState.qrzSession) {
+    const el = document.getElementById('qrz-status');
+    if (!appState.qrzUser || !appState.qrzPass) return null;
+    try {
+      const data = await api('POST', '/qrz/session', { username: appState.qrzUser, password: appState.qrzPass });
+      appState.qrzSession = data.key;
+    } catch(e) { return null; }
+  }
   try {
-    const r = await fetch(`https://xmldata.qrz.com/xml/current/?s=${appState.qrzSession}&callsign=${encodeURIComponent(call)}`);
-    const txt = await r.text();
-    const doc = new DOMParser().parseFromString(txt, 'text/xml');
-    const g = tag => doc.querySelector(tag)?.textContent || '';
-    const fname = g('fname'), lname = g('lname'), cls = g('class');
-    const lat = parseFloat(g('lat')), lon = parseFloat(g('lon'));
-    const addr = g('addr1'), city = g('addr2'), state = g('state'), zip = g('zip');
-    if (!fname && !lname) return null;
-    const res = { name: [fname, lname].filter(Boolean).join(' '), licClass: cls, addr, city, state, zip, lat: isNaN(lat) ? null : lat, lon: isNaN(lon) ? null : lon, usng: null };
-    if (res.lat !== null && res.lon !== null) res.usng = latLonToUSNG(res.lat, res.lon, 5);
-    return res;
-  } catch (e) { return null; }
+    const data = await api('GET', '/qrz/lookup/' + encodeURIComponent(call) + '?key=' + encodeURIComponent(appState.qrzSession));
+    if (data.lat !== null && data.lon !== null) data.usng = latLonToUSNG(data.lat, data.lon, 5);
+    else data.usng = null;
+    return data;
+  } catch(e) { return null; }
 }
 
 function latLonToUSNG(lat, lon, precision) {

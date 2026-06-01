@@ -2,6 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
+const fetch = require('node-fetch');
 const { db, queries, getFullCheckins } = require('./database');
 
 const app = express();
@@ -33,6 +34,64 @@ function requireRole(...roles) {
   };
 }
 
+// QRZ PROXY - avoids CORS by making the request server-side
+app.post('/api/qrz/session', requireAuth, async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  try {
+    const url = `https://xmldata.qrz.com/xml/current/?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&agent=NetLogger1.0`;
+    const r = await fetch(url);
+    const txt = await r.text();
+    const keyMatch = txt.match(/<Key>([^<]+)<\/Key>/);
+    const errMatch = txt.match(/<Error>([^<]+)<\/Error>/);
+    if (keyMatch) {
+      res.json({ key: keyMatch[1] });
+    } else {
+      res.status(401).json({ error: errMatch ? errMatch[1] : 'Login failed' });
+    }
+  } catch (e) {
+    res.status(500).json({ error: 'QRZ connection failed: ' + e.message });
+  }
+});
+
+app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
+  const { callsign } = req.params;
+  const { key } = req.query;
+  if (!key) return res.status(400).json({ error: 'QRZ session key required' });
+  try {
+    const url = `https://xmldata.qrz.com/xml/current/?s=${encodeURIComponent(key)}&callsign=${encodeURIComponent(callsign)}`;
+    const r = await fetch(url);
+    const txt = await r.text();
+    const get = tag => { const m = txt.match(new RegExp('<' + tag + '>([^<]*)</' + tag + '>')); return m ? m[1] : ''; };
+    const fname = get('fname');
+    const lname = get('lname');
+    const cls = get('class');
+    const lat = parseFloat(get('lat'));
+    const lon = parseFloat(get('lon'));
+    const addr1 = get('addr1');
+    const addr2 = get('addr2');
+    const state = get('state');
+    const zip = get('zip');
+    const errMatch = txt.match(/<Error>([^<]+)<\/Error>/);
+    if (!fname && !lname) {
+      return res.status(404).json({ error: errMatch ? errMatch[1] : 'Callsign not found' });
+    }
+    res.json({
+      name: [fname, lname].filter(Boolean).join(' '),
+      licClass: cls,
+      lat: isNaN(lat) ? null : lat,
+      lon: isNaN(lon) ? null : lon,
+      addr: addr1,
+      city: addr2,
+      state,
+      zip
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'QRZ lookup failed: ' + e.message });
+  }
+});
+
+// AUTH
 app.get('/api/users/list', (req, res) => {
   const users = queries.getAllUsers.all();
   res.json(users.map(u => ({ id: u.id, callsign: u.callsign, role: u.role })));
@@ -61,6 +120,7 @@ app.get('/api/auth/me', (req, res) => {
   res.json({ authenticated: true, callsign: req.session.callsign, role: req.session.role });
 });
 
+// USER MANAGEMENT
 app.get('/api/users', requireRole('netcontrol'), (req, res) => {
   res.json(queries.getAllUsers.all());
 });
@@ -102,6 +162,7 @@ app.delete('/api/users/:id', requireRole('netcontrol'), (req, res) => {
   res.json({ ok: true });
 });
 
+// NET SESSIONS
 app.get('/api/session/current', requireAuth, (req, res) => {
   const session = queries.getOpenSession.get();
   if (!session) return res.json({ active: false });
@@ -134,6 +195,7 @@ app.get('/api/session/:id/checkins', requireAuth, (req, res) => {
   res.json(getFullCheckins(req.params.id));
 });
 
+// CHECKINS
 app.post('/api/checkin', requireRole('netcontrol', 'backup'), (req, res) => {
   const session = queries.getOpenSession.get();
   if (!session) return res.status(404).json({ error: 'No open net session' });
