@@ -669,7 +669,7 @@ function onCallsignInput(el) {
       }
       if (info.lat && info.lon) {
         try {
-          const w3wData = await api('GET', '/w3w/' + info.lat + '/' + info.lon);
+          const w3wData = await api('GET', '/w3w?lat=' + encodeURIComponent(info.lat) + '&lon=' + encodeURIComponent(info.lon));
           if (w3wData.words) {
             info.w3w = w3wData.words;
             const w3wEl = document.getElementById('w3w-val');
