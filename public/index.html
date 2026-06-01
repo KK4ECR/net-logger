@@ -679,11 +679,7 @@ function onCallsignInput(el) {
             w3wEl.href = w3wData.url;
             document.getElementById('w3w-display').classList.remove('hidden');
           }
-        } catch(e) {
-          console.error('W3W frontend error:', e.message);
-        }
-      } else {
-        console.log('W3W skipped - lat/lon not valid:', info.lat, info.lon);
+        } catch(e) { /* w3w lookup failed silently */ }
       }
     } else {
       hint.className = 'qrz-hint err'; hint.textContent = '✗ Not found in QRZ';
