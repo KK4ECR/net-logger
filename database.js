@@ -19,8 +19,21 @@ db.exec(`
     callsign TEXT UNIQUE NOT NULL COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'observer',
+    email TEXT,
+    full_name TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME
+  );
+
+  CREATE TABLE IF NOT EXISTS pending_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    callsign TEXT NOT NULL COLLATE NOCASE,
+    full_name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    requested_role TEXT NOT NULL DEFAULT 'observer',
+    password_hash TEXT NOT NULL,
+    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'pending'
   );
 
   CREATE TABLE IF NOT EXISTS net_sessions (
@@ -70,13 +83,11 @@ db.exec(`
   );
 `);
 
-// Migration: add w3w column if it doesn't exist
-try {
-  db.exec("ALTER TABLE checkins ADD COLUMN w3w TEXT");
-  console.log('Migration: added w3w column to checkins');
-} catch(e) {
-  // Column already exists, ignore
-}
+// Migrations - run silently, ignore if column already exists
+['email', 'full_name'].forEach(col => {
+  try { db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`); } catch(e) {}
+});
+try { db.exec("ALTER TABLE checkins ADD COLUMN w3w TEXT"); } catch(e) {}
 
 function bootstrapAdmin() {
   const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('netcontrol');
@@ -91,21 +102,33 @@ function bootstrapAdmin() {
 bootstrapAdmin();
 
 const queries = {
-  getAllUsers: db.prepare('SELECT id, callsign, role, last_login FROM users ORDER BY callsign'),
+  // Users
+  getAllUsers: db.prepare('SELECT id, callsign, role, email, full_name, last_login FROM users ORDER BY callsign'),
   getUserByCallsign: db.prepare('SELECT * FROM users WHERE callsign = ? COLLATE NOCASE'),
-  getUserById: db.prepare('SELECT id, callsign, role FROM users WHERE id = ?'),
-  createUser: db.prepare('INSERT INTO users (callsign, password_hash, role) VALUES (?, ?, ?)'),
+  getUserById: db.prepare('SELECT id, callsign, role, email, full_name FROM users WHERE id = ?'),
+  createUser: db.prepare('INSERT INTO users (callsign, password_hash, role, email, full_name) VALUES (?, ?, ?, ?, ?)'),
   updateUserPassword: db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
   updateUserRole: db.prepare('UPDATE users SET role = ? WHERE id = ?'),
+  updateUserEmail: db.prepare('UPDATE users SET email = ? WHERE id = ?'),
   deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
   updateLastLogin: db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?'),
+  getAdminEmails: db.prepare("SELECT email FROM users WHERE role = 'netcontrol' AND email IS NOT NULL AND email != ''"),
 
+  // Pending requests
+  createRequest: db.prepare('INSERT INTO pending_requests (callsign, full_name, email, requested_role, password_hash) VALUES (?, ?, ?, ?, ?)'),
+  getPendingRequests: db.prepare("SELECT * FROM pending_requests WHERE status = 'pending' ORDER BY requested_at ASC"),
+  getRequestById: db.prepare('SELECT * FROM pending_requests WHERE id = ?'),
+  updateRequestStatus: db.prepare('UPDATE pending_requests SET status = ? WHERE id = ?'),
+  getRequestByCallsign: db.prepare("SELECT * FROM pending_requests WHERE callsign = ? COLLATE NOCASE AND status = 'pending'"),
+
+  // Sessions
   getOpenSession: db.prepare(`SELECT * FROM net_sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1`),
   getSessionById: db.prepare('SELECT * FROM net_sessions WHERE id = ?'),
   createSession: db.prepare(`INSERT INTO net_sessions (net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, opened_at, opened_by, status) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, 'open')`),
   closeSession: db.prepare(`UPDATE net_sessions SET status = 'closed', closed_at = CURRENT_TIMESTAMP, closed_by = ? WHERE id = ?`),
   getRecentSessions: db.prepare('SELECT * FROM net_sessions ORDER BY opened_at DESC LIMIT 20'),
 
+  // Checkins
   getCheckins: db.prepare('SELECT * FROM checkins WHERE session_id = ? ORDER BY seq ASC'),
   getCheckinById: db.prepare('SELECT * FROM checkins WHERE id = ?'),
   getNextSeq: db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM checkins WHERE session_id = ?'),
@@ -113,6 +136,7 @@ const queries = {
   deleteCheckin: db.prepare('DELETE FROM checkins WHERE id = ? AND session_id = ?'),
   resequenceCheckins: db.prepare('UPDATE checkins SET seq = (SELECT COUNT(*) FROM checkins c2 WHERE c2.session_id = checkins.session_id AND c2.id <= checkins.id) WHERE session_id = ?'),
 
+  // Traffic
   getTrafficByCheckin: db.prepare('SELECT * FROM traffic WHERE checkin_id = ? ORDER BY id'),
   insertTraffic: db.prepare('INSERT INTO traffic (checkin_id, precedence, type, deliver_to, passed) VALUES (?, ?, ?, ?, ?)'),
   updateTrafficPassed: db.prepare('UPDATE traffic SET passed = ? WHERE id = ?'),

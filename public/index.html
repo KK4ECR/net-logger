@@ -25,6 +25,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .form-group select,.form-group input{height:38px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);padding:0 12px;font-size:14px;width:100%;}
 .form-group select:focus,.form-group input:focus{outline:none;border-color:var(--nc-green);box-shadow:0 0 0 3px rgba(29,158,117,.12);}
 .login-err{font-size:13px;color:var(--nc-red);margin-bottom:12px;min-height:18px;}
+.login-success{font-size:13px;color:var(--nc-green);margin-bottom:12px;min-height:18px;background:var(--nc-green-light);padding:8px 10px;border-radius:var(--radius);}
+.req-form{display:none;}
+.req-form.active{display:block;}
+.login-link{font-size:12px;color:var(--nc-green);text-align:center;margin-top:10px;cursor:pointer;text-decoration:underline;}
+.pending-badge{display:inline-flex;align-items:center;justify-content:center;background:var(--nc-red);color:#fff;font-size:10px;font-weight:700;border-radius:50%;width:18px;height:18px;margin-left:5px;}
+.req-row{display:grid;grid-template-columns:80px 1fr 1fr 100px auto;gap:8px;align-items:center;padding:10px 12px;border-radius:var(--radius);border:1px solid var(--nc-amber);background:var(--nc-amber-light);margin-bottom:8px;}
+.req-call{font-family:monospace;font-weight:700;font-size:13px;}
+.req-meta{font-size:12px;color:var(--muted);}
 
 /* LAYOUT */
 .app-wrap{display:flex;flex-direction:column;min-height:100vh;}
@@ -156,18 +164,60 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
   <div class="login-card">
     <div class="login-logo">
       <i class="ti ti-radio"></i>
-      <div><h1>Net Logger</h1><span>Amateur Radio Net Control System</span></div>
+      <div><h1>Net Logger</h1><span>Clay County ARES Net Control System</span></div>
     </div>
-    <div class="form-group">
-      <label>Select callsign</label>
-      <select id="login-callsign"><option value="">-- Select your callsign --</option></select>
+
+    <!-- SIGN IN FORM -->
+    <div id="signin-form">
+      <div class="form-group">
+        <label>Select callsign</label>
+        <select id="login-callsign"><option value="">-- Select your callsign --</option></select>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="Your password" onkeydown="if(event.key==='Enter')doLogin()" />
+      </div>
+      <div class="login-err" id="login-err"></div>
+      <button class="btn primary" style="width:100%;justify-content:center" onclick="doLogin()"><i class="ti ti-login"></i> Sign in</button>
+      <div class="login-link" onclick="showRequestForm()">Don't have an account? Request access</div>
     </div>
-    <div class="form-group">
-      <label>Password</label>
-      <input type="password" id="login-password" placeholder="Your password" onkeydown="if(event.key==='Enter')doLogin()" />
+
+    <!-- REQUEST ACCOUNT FORM -->
+    <div id="request-form" style="display:none">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Fill in your details below. Your request will be reviewed by the net control administrator.</p>
+      <div class="form-group">
+        <label>Callsign</label>
+        <input type="text" id="req-callsign" placeholder="Your callsign e.g. W4XYZ" oninput="this.value=this.value.toUpperCase()" />
+      </div>
+      <div class="form-group">
+        <label>Full name</label>
+        <input type="text" id="req-name" placeholder="First and last name" />
+      </div>
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" id="req-email" placeholder="your@email.com" />
+      </div>
+      <div class="form-group">
+        <label>Access level requested</label>
+        <select id="req-role">
+          <option value="observer">Observer (view only)</option>
+          <option value="backup">Backup Net Control (add check-ins)</option>
+          <option value="netcontrol">Net Control (full access)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="req-password" placeholder="Choose a password (min 6 chars)" />
+      </div>
+      <div class="form-group">
+        <label>Confirm password</label>
+        <input type="password" id="req-password2" placeholder="Confirm password" />
+      </div>
+      <div class="login-err" id="req-err"></div>
+      <div class="login-success" id="req-success" style="display:none"></div>
+      <button class="btn primary" style="width:100%;justify-content:center" onclick="submitRequest()"><i class="ti ti-send"></i> Submit request</button>
+      <div class="login-link" onclick="showSigninForm()">Already have an account? Sign in</div>
     </div>
-    <div class="login-err" id="login-err"></div>
-    <button class="btn primary" style="width:100%;justify-content:center" onclick="doLogin()"><i class="ti ti-login"></i> Sign in</button>
   </div>
 </div>
 
@@ -197,7 +247,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <div class="nav-item" onclick="showPage('export')" id="nav-export"><i class="ti ti-download"></i> Export</div>
       <div class="nav-item" onclick="showPage('map')" id="nav-map"><i class="ti ti-map-pin"></i> Map</div>
       <div class="nav-section">Admin</div>
-      <div class="nav-item" onclick="showPage('admin')" id="nav-admin"><i class="ti ti-users"></i> Users</div>
+      <div class="nav-item" onclick="showPage('admin')" id="nav-admin"><i class="ti ti-users"></i> Users <span class="pending-badge" id="pending-badge" style="display:none">0</span></div>
     </div>
     <div class="content">
 
@@ -333,12 +383,19 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
       <!-- ADMIN PAGE -->
       <div class="page" id="page-admin">
+
+        <div class="panel" id="pending-panel" style="border:1.5px solid var(--nc-amber)">
+          <div class="panel-title" style="color:var(--nc-amber)"><i class="ti ti-clock"></i> Pending account requests</div>
+          <div id="pending-requests-wrap"><div class="empty-state" style="padding:1rem"><i class="ti ti-check"></i>No pending requests</div></div>
+        </div>
+
         <div class="panel">
-          <div class="panel-title"><i class="ti ti-user-plus"></i> Add user</div>
-          <div style="display:grid;grid-template-columns:130px 1fr 1fr 110px auto;gap:10px;align-items:end;flex-wrap:wrap">
+          <div class="panel-title"><i class="ti ti-user-plus"></i> Add user manually</div>
+          <div style="display:grid;grid-template-columns:110px 1fr 1fr 1fr 100px auto;gap:10px;align-items:end;flex-wrap:wrap">
             <div class="form-group"><label>Callsign</label><input type="text" id="new-call" placeholder="W4XYZ" oninput="this.value=this.value.toUpperCase()" /></div>
+            <div class="form-group"><label>Full name</label><input type="text" id="new-fullname" placeholder="Full name" /></div>
+            <div class="form-group"><label>Email</label><input type="email" id="new-email" placeholder="email@example.com" /></div>
             <div class="form-group"><label>Password</label><input type="password" id="new-pass" placeholder="Password" /></div>
-            <div class="form-group"><label>Confirm password</label><input type="password" id="new-pass2" placeholder="Confirm" /></div>
             <div class="form-group"><label>Role</label>
               <select id="new-role"><option value="netcontrol">Net Control</option><option value="backup">Backup NC</option><option value="observer">Observer</option></select>
             </div>
@@ -419,6 +476,7 @@ function showApp() {
   roleBadge.className = 'role-badge role-' + appState.user.role;
   applyRoleUI();
   loadCurrentSession();
+  if (appState.user.role === 'netcontrol') checkPendingBadge();
   document.getElementById('net-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('ci-time').value = nowTime();
   document.getElementById('net-start-time').value = nowTime();
@@ -453,6 +511,15 @@ async function loadCurrentSession() {
   } catch (e) {}
 }
 
+async function checkPendingBadge() {
+  try {
+    const requests = await api('GET', '/admin/requests');
+    const badge = document.getElementById('pending-badge');
+    if (requests.length > 0) { badge.style.display = 'inline-flex'; badge.textContent = requests.length; }
+    else badge.style.display = 'none';
+  } catch(e) {}
+}
+
 async function pollSession() {
   if (!appState.session) return;
   try {
@@ -463,6 +530,7 @@ async function pollSession() {
       renderLog();
       updateStats();
       if (mapInitialized && document.getElementById('page-map').classList.contains('active')) renderMap();
+      if (appState.user && appState.user.role === 'netcontrol') checkPendingBadge();
     }
   } catch (e) {}
 }
@@ -816,36 +884,89 @@ async function loadUsers() {
     const users = await api('GET', '/users');
     const el = document.getElementById('user-table-wrap');
     if (!users.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-users"></i>No users yet</div>'; return; }
-    el.innerHTML = `<table class="admin-table">
-      <thead><tr><th>Callsign</th><th>Role</th><th>Last login</th><th>Actions</th></tr></thead>
+    el.innerHTML = `<div style="overflow-x:auto"><table class="admin-table">
+      <thead><tr><th>Callsign</th><th>Name</th><th>Email</th><th>Role</th><th>Last login</th><th>Actions</th></tr></thead>
       <tbody>${users.map(u => `<tr>
         <td style="font-family:monospace;font-weight:700">${u.callsign}</td>
+        <td style="font-size:13px">${u.full_name || ''}</td>
+        <td style="font-size:12px;color:var(--muted)">${u.email || ''}</td>
         <td><span class="role-badge role-${u.role}">${ROLES[u.role] || u.role}</span></td>
         <td style="font-size:12px;color:var(--muted)">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="resetPassword(${u.id},'${u.callsign}')"><i class="ti ti-key"></i> Reset pw</button>
-          <button class="btn sm" onclick="changeRole(${u.id},'${u.role}')"><i class="ti ti-refresh"></i> Change role</button>
-          ${u.id !== appState.user?.id ? `<button class="btn sm danger" onclick="deleteUser(${u.id},'${u.callsign}')"><i class="ti ti-trash"></i> Delete</button>` : ''}
+          <button class="btn sm" onclick="changeRole(${u.id},'${u.role}')"><i class="ti ti-refresh"></i> Role</button>
+          ${u.id !== appState.user?.id ? `<button class="btn sm danger" onclick="deleteUser(${u.id},'${u.callsign}')"><i class="ti ti-trash"></i></button>` : ''}
         </td>
       </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   } catch (e) {}
+}
+
+async function loadPendingRequests() {
+  try {
+    const requests = await api('GET', '/admin/requests');
+    const el = document.getElementById('pending-requests-wrap');
+    const badge = document.getElementById('pending-badge');
+    if (!requests.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:1rem"><i class="ti ti-check"></i>No pending requests</div>';
+      badge.style.display = 'none';
+      return;
+    }
+    badge.style.display = 'inline-flex';
+    badge.textContent = requests.length;
+    el.innerHTML = requests.map(r => `
+      <div class="req-row">
+        <div><div class="req-call">${r.callsign}</div><div class="req-meta">#${r.id}</div></div>
+        <div><div style="font-size:13px;font-weight:500">${r.full_name}</div><div class="req-meta">${r.email}</div></div>
+        <div>
+          <div class="req-meta">Requested: <strong>${ROLES[r.requested_role] || r.requested_role}</strong></div>
+          <div class="req-meta">${new Date(r.requested_at).toLocaleString()}</div>
+        </div>
+        <div>
+          <select id="approve-role-${r.id}" style="font-size:12px;height:28px;padding:0 6px;border-radius:var(--radius);border:1px solid var(--border);background:#fff;width:100%">
+            <option value="observer" ${r.requested_role==='observer'?'selected':''}>Observer</option>
+            <option value="backup" ${r.requested_role==='backup'?'selected':''}>Backup NC</option>
+            <option value="netcontrol" ${r.requested_role==='netcontrol'?'selected':''}>Net Control</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm primary" onclick="approveRequest(${r.id})"><i class="ti ti-check"></i> Approve</button>
+          <button class="btn sm danger" onclick="denyRequest(${r.id},'${r.full_name}')"><i class="ti ti-x"></i> Deny</button>
+        </div>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+async function approveRequest(id) {
+  const role = document.getElementById('approve-role-' + id).value;
+  try {
+    await api('POST', '/admin/requests/' + id + '/approve', { role });
+    loadPendingRequests();
+    loadUsers();
+    boot();
+  } catch(e) { alert(e.message); }
+}
+
+async function denyRequest(id, name) {
+  if (!confirm('Deny request from ' + name + '? They will receive a polite email explaining that only members can have accounts.')) return;
+  try {
+    await api('POST', '/admin/requests/' + id + '/deny');
+    loadPendingRequests();
+  } catch(e) { alert(e.message); }
 }
 
 async function createUser() {
   const call = document.getElementById('new-call').value.trim().toUpperCase();
   const pass = document.getElementById('new-pass').value;
-  const pass2 = document.getElementById('new-pass2').value;
   const role = document.getElementById('new-role').value;
+  const email = document.getElementById('new-email').value.trim();
+  const full_name = document.getElementById('new-fullname').value.trim();
   const err = document.getElementById('user-err');
   if (!call || !pass) { err.textContent = 'Callsign and password required.'; return; }
-  if (pass !== pass2) { err.textContent = 'Passwords do not match.'; return; }
   try {
-    await api('POST', '/users', { callsign: call, password: pass, role });
+    await api('POST', '/users', { callsign: call, password: pass, role, email, full_name });
     err.textContent = '';
-    document.getElementById('new-call').value = '';
-    document.getElementById('new-pass').value = '';
-    document.getElementById('new-pass2').value = '';
+    ['new-call','new-pass','new-email','new-fullname'].forEach(id => document.getElementById(id).value = '');
     loadUsers();
     boot();
   } catch (e) { err.textContent = e.message; }
@@ -881,11 +1002,44 @@ function showPage(name) {
   document.getElementById('page-' + name).classList.add('active');
   document.getElementById('nav-' + name).classList.add('active');
   if (name === 'log') { renderLog(); updateStats(); }
-  if (name === 'admin') loadUsers();
+  if (name === 'admin') { loadUsers(); loadPendingRequests(); }
   if (name === 'map') { initMap(); renderMap(); }
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+function showRequestForm() {
+  document.getElementById('signin-form').style.display = 'none';
+  document.getElementById('request-form').style.display = 'block';
+  document.getElementById('req-err').textContent = '';
+  document.getElementById('req-success').style.display = 'none';
+}
+
+function showSigninForm() {
+  document.getElementById('request-form').style.display = 'none';
+  document.getElementById('signin-form').style.display = 'block';
+}
+
+async function submitRequest() {
+  const callsign = document.getElementById('req-callsign').value.trim().toUpperCase();
+  const full_name = document.getElementById('req-name').value.trim();
+  const email = document.getElementById('req-email').value.trim();
+  const requested_role = document.getElementById('req-role').value;
+  const password = document.getElementById('req-password').value;
+  const password2 = document.getElementById('req-password2').value;
+  const err = document.getElementById('req-err');
+  const success = document.getElementById('req-success');
+  err.textContent = ''; success.style.display = 'none';
+  if (!callsign || !full_name || !email || !password) { err.textContent = 'All fields are required.'; return; }
+  if (password !== password2) { err.textContent = 'Passwords do not match.'; return; }
+  if (password.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
+  try {
+    const data = await api('POST', '/request-account', { callsign, full_name, email, requested_role, password });
+    success.textContent = data.message;
+    success.style.display = 'block';
+    ['req-callsign','req-name','req-email','req-password','req-password2'].forEach(id => document.getElementById(id).value = '');
+  } catch(e) { err.textContent = e.message; }
+}
 
 // MAP
 let netMap = null;
