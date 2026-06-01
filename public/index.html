@@ -96,7 +96,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 .traffic-item select,.traffic-item input{height:28px;font-size:12px;border-radius:var(--radius);border:1px solid var(--border);background:#fff;padding:0 8px;color:var(--text);}
 
 /* LIVE LIST */
-.live-row{display:grid;grid-template-columns:95px 1fr 65px 155px 80px 32px;gap:8px;align-items:center;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:6px;background:var(--surface);}
+.live-row{display:grid;grid-template-columns:95px 1fr 65px 155px 130px 80px 32px;gap:8px;align-items:center;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:6px;background:var(--surface);}
 .live-row.newest{border-color:var(--nc-green);border-width:1.5px;}
 .call-mono{font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.03em;}
 .seq-label{font-size:10px;color:var(--muted);}
@@ -136,6 +136,10 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 .map-pin-count strong{color:var(--text);}
 .map-live-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--radius);background:var(--nc-green-light);color:var(--nc-green-dark);display:inline-flex;align-items:center;gap:4px;}
 .map-closed-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--radius);background:#F1EFE8;color:#444441;}
+.w3w-pill{font-size:10px;color:#E11F26;background:#FEF0F0;padding:2px 6px;border-radius:var(--radius);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;display:block;text-decoration:none;font-weight:500;}
+.w3w-pill:hover{background:#FCDCDD;text-decoration:underline;}
+.w3w-display{display:flex;align-items:center;gap:6px;margin-top:4px;}
+.w3w-display i{font-size:13px;color:#E11F26;}
 
 @media(max-width:700px){
   .sidebar{display:none;}
@@ -252,6 +256,14 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <div>
               <div class="usng-meta" id="usng-addr"></div>
               <div class="usng-meta" id="usng-latlon"></div>
+            </div>
+          </div>
+
+          <div id="w3w-display" class="hidden usng-row" style="background:#FEF0F0;border-left:3px solid #E11F26;">
+            <i class="ti ti-brand-w3w" style="font-size:18px;color:#E11F26"></i>
+            <div>
+              <div style="font-size:11px;color:#9B1217;margin-bottom:2px">what3words address</div>
+              <a id="w3w-val" class="w3w-pill" href="#" target="_blank" rel="noopener"></a>
             </div>
           </div>
 
@@ -569,6 +581,7 @@ function onCallsignInput(el) {
   const call = el.value.trim();
   ['ci-name', 'ci-class'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('usng-display').classList.add('hidden');
+  document.getElementById('w3w-display').classList.add('hidden');
   const hint = document.getElementById('qrz-hint');
   el._qrzInfo = null;
   if (call.length < 3) { hint.textContent = ''; return; }
@@ -585,6 +598,18 @@ function onCallsignInput(el) {
         document.getElementById('usng-addr').textContent = [info.addr, info.city, info.state, info.zip].filter(Boolean).join(', ');
         document.getElementById('usng-latlon').textContent = info.lat.toFixed(5) + '°, ' + info.lon.toFixed(5) + '°';
         document.getElementById('usng-display').classList.remove('hidden');
+      }
+      if (info.lat && info.lon) {
+        try {
+          const w3wData = await api('GET', '/w3w/' + info.lat + '/' + info.lon);
+          if (w3wData.words) {
+            info.w3w = w3wData.words;
+            const w3wEl = document.getElementById('w3w-val');
+            w3wEl.textContent = '///' + w3wData.words;
+            w3wEl.href = w3wData.url;
+            document.getElementById('w3w-display').classList.remove('hidden');
+          }
+        } catch(e) { /* w3w lookup failed silently */ }
       }
     } else {
       hint.className = 'qrz-hint err'; hint.textContent = '✗ Not found in QRZ';
@@ -632,7 +657,7 @@ async function addCheckin() {
       comment_count: hasComments ? parseInt(document.getElementById('ci-comment-count').value) || 1 : 0,
       comment_notes: hasComments ? document.getElementById('ci-comment-notes').value : '',
       has_traffic: hasTraffic,
-      lat: info.lat || null, lon: info.lon || null, usng: info.usng || null,
+      lat: info.lat || null, lon: info.lon || null, usng: info.usng || null, w3w: info.w3w || null,
       address: [info.addr, info.city, info.state, info.zip].filter(Boolean).join(', '),
       traffic: hasTraffic ? getTrafficRows() : []
     });
@@ -665,6 +690,7 @@ function clearCI() {
   document.getElementById('traffic-list').innerHTML = '';
   document.getElementById('qrz-hint').textContent = '';
   document.getElementById('usng-display').classList.add('hidden');
+  document.getElementById('w3w-display').classList.add('hidden');
   msgCount = 0;
 }
 
@@ -675,11 +701,13 @@ function renderLiveList() {
   el.innerHTML = recent.map((ci, i) => {
     const isNew = i === 0;
     const flags = [(ci.has_comments ? `<span class="flag ann">${ci.comment_count} ann.</span>` : ''), ...((ci.traffic || []).map(t => `<span class="flag traf">${t.precedence}</span>`))].filter(Boolean).join('');
+    const w3wHtml = ci.w3w ? `<a class="w3w-pill" href="https://what3words.com/${ci.w3w}" target="_blank" rel="noopener" title="${ci.w3w}">///\${ci.w3w}</a>` : '<span style="font-size:11px;color:var(--muted)">No w3w</span>';
     return `<div class="live-row ${isNew ? 'newest' : ''}">
       <div><div class="call-mono">${ci.callsign}</div><div class="seq-label">#${ci.seq}</div></div>
       <div><div class="ci-name-cell">${ci.name || '<span style="color:var(--muted)">Unknown</span>'}</div><div class="ci-class-cell">${ci.license_class || ''}</div></div>
       <div class="ci-time-cell">${ci.time_in}</div>
       <div>${ci.usng ? `<span class="usng-pill" title="${ci.address || ''}">${ci.usng}</span>` : '<span style="font-size:11px;color:var(--muted)">No coord</span>'}</div>
+      <div>${w3wHtml}</div>
       <div class="flags-cell">${flags}</div>
       <button class="btn sm" onclick="removeCheckin(${ci.id})" aria-label="Remove" ${appState.user.role === 'observer' ? 'disabled' : ''}><i class="ti ti-trash"></i></button>
     </div>`;
@@ -698,6 +726,7 @@ function renderLog() {
       <td>${ci.license_class || ''}</td>
       <td style="font-family:monospace">${ci.time_in}</td>
       <td style="font-family:monospace;font-size:11px;color:var(--nc-blue)">${ci.usng || '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="font-size:11px">${ci.w3w ? `<a href="https://what3words.com/${ci.w3w}" target="_blank" rel="noopener" style="color:#E11F26;font-weight:500;text-decoration:none" title="Open in what3words">///\${ci.w3w}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
       <td style="font-size:11px;color:var(--muted)">${ci.logged_by_callsign || ''}</td>
       <td style="font-size:12px">${ci.has_comments ? ci.comment_count + (ci.comment_notes ? ' · ' + ci.comment_notes : '') : ''}</td>
       <td style="font-size:11px">${(ci.traffic || []).map(t => `<div style="margin-bottom:2px"><span style="font-weight:600;color:${t.precedence === 'Emergency' ? 'var(--nc-red)' : t.precedence === 'Priority' ? 'var(--nc-blue)' : t.precedence === 'Welfare' ? 'var(--nc-amber)' : 'var(--nc-green)'}">${t.precedence}</span> · ${t.type} → ${t.deliver_to}${t.passed ? ' <span style="color:var(--nc-green)">✓</span>' : ''}</div>`).join('')}</td>
@@ -719,10 +748,10 @@ function updateStats() {
 
 function exportCSV() {
   const s = appState.session || {};
-  let rows = [['NET LOGGER EXPORT'], ['Net Name', s.net_name || ''], ['Net Control', s.nc_callsign || ''], ['Backup Net Control', s.bnc_callsign || ''], ['Date', s.net_date || ''], ['Frequency', (s.frequency || '') + ' MHz'], ['Mode', s.mode || ''], ['Opened', s.opened_at || ''], ['Closed', s.closed_at || ''], [], ['#', 'Callsign', 'Name', 'License Class', 'Time In', 'USNG (1m)', 'Latitude', 'Longitude', 'Address', 'Logged By', 'Comments', 'Comment Notes', 'Traffic']];
+  let rows = [['NET LOGGER EXPORT'], ['Net Name', s.net_name || ''], ['Net Control', s.nc_callsign || ''], ['Backup Net Control', s.bnc_callsign || ''], ['Date', s.net_date || ''], ['Frequency', (s.frequency || '') + ' MHz'], ['Mode', s.mode || ''], ['Opened', s.opened_at || ''], ['Closed', s.closed_at || ''], [], ['#', 'Callsign', 'Name', 'License Class', 'Time In', 'USNG (1m)', 'what3words', 'what3words URL', 'Latitude', 'Longitude', 'Address', 'Logged By', 'Comments', 'Comment Notes', 'Traffic']];
   appState.checkins.forEach(ci => {
     const traf = (ci.traffic || []).map(t => t.precedence + '/' + t.type + '/' + t.deliver_to + (t.passed ? '/PASSED' : '')).join(' | ');
-    rows.push([ci.seq, ci.callsign, ci.name, ci.license_class, ci.time_in, ci.usng || '', ci.lat != null ? Number(ci.lat).toFixed(6) : '', ci.lon != null ? Number(ci.lon).toFixed(6) : '', ci.address || '', ci.logged_by_callsign || '', ci.has_comments ? ci.comment_count : '', ci.comment_notes || '', traf]);
+    rows.push([ci.seq, ci.callsign, ci.name, ci.license_class, ci.time_in, ci.usng || '', ci.w3w ? '///' + ci.w3w : '', ci.w3w ? 'https://what3words.com/' + ci.w3w : '', ci.lat != null ? Number(ci.lat).toFixed(6) : '', ci.lon != null ? Number(ci.lon).toFixed(6) : '', ci.address || '', ci.logged_by_callsign || '', ci.has_comments ? ci.comment_count : '', ci.comment_notes || '', traf]);
   });
   const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
   const a = document.createElement('a');
@@ -748,6 +777,7 @@ function exportPDF() {
         <th style="text-align:left;padding:4px 6px;color:#666">Class</th>
         <th style="text-align:left;padding:4px 6px;color:#666">Time</th>
         <th style="text-align:left;padding:4px 6px;color:#666">USNG (1m)</th>
+        <th style="text-align:left;padding:4px 6px;color:#666">what3words</th>
         <th style="text-align:left;padding:4px 6px;color:#666">Logged by</th>
         <th style="text-align:left;padding:4px 6px;color:#666">Notes / Traffic</th>
       </tr></thead>
@@ -762,6 +792,7 @@ function exportPDF() {
           <td style="padding:4px 6px">${ci.license_class || ''}</td>
           <td style="padding:4px 6px;font-family:monospace">${ci.time_in}</td>
           <td style="padding:4px 6px;font-family:monospace;color:#185FA5">${ci.usng || '—'}</td>
+          <td style="padding:4px 6px;color:#E11F26;font-weight:500">${ci.w3w ? '///' + ci.w3w : '—'}</td>
           <td style="padding:4px 6px;color:#666">${ci.logged_by_callsign || ''}</td>
           <td style="padding:4px 6px;color:#555">${notes.join(' · ')}</td>
         </tr>`;
@@ -902,12 +933,13 @@ function renderMap() {
       iconAnchor: [0, 0]
     });
     const trafficLines = (ci.traffic || []).map(t => '<div style="font-size:11px;color:#555">' + t.precedence + ' · ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' ✓' : '') + '</div>').join('');
-    const popup = '<div style="font-family:sans-serif;min-width:160px">' +
+    const popup = '<div style="font-family:sans-serif;min-width:180px">' +
       '<div style="font-family:monospace;font-weight:700;font-size:15px;margin-bottom:4px">' + ci.callsign + '</div>' +
       '<div style="font-size:13px;margin-bottom:2px">' + (ci.name || 'Unknown') + '</div>' +
-      '<div style="font-size:11px;color:#666;margin-bottom:4px">Class: ' + (ci.license_class || '?') + ' · Check-in #' + ci.seq + ' at ' + ci.time_in + '</div>' +
-      (ci.usng ? '<div style="font-size:11px;font-family:monospace;color:#185FA5;margin-bottom:4px">' + ci.usng + '</div>' : '') +
-      (ci.address ? '<div style="font-size:11px;color:#888">' + ci.address + '</div>' : '') +
+      '<div style="font-size:11px;color:#666;margin-bottom:6px">Class: ' + (ci.license_class || '?') + ' · Check-in #' + ci.seq + ' at ' + ci.time_in + '</div>' +
+      (ci.usng ? '<div style="font-size:11px;font-family:monospace;color:#185FA5;margin-bottom:4px">📍 ' + ci.usng + '</div>' : '') +
+      (ci.w3w ? '<div style="margin-bottom:4px"><a href="https://what3words.com/' + ci.w3w + '" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:#E11F26;text-decoration:none">///' + ci.w3w + '</a></div>' : '') +
+      (ci.address ? '<div style="font-size:11px;color:#888;margin-bottom:4px">' + ci.address + '</div>' : '') +
       (trafficLines ? '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px">' + trafficLines + '</div>' : '') +
       '</div>';
     const marker = L.marker([ci.lat, ci.lon], { icon }).addTo(netMap);

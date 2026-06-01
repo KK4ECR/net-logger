@@ -54,6 +54,7 @@ db.exec(`
     lat REAL,
     lon REAL,
     usng TEXT,
+    w3w TEXT,
     address TEXT,
     logged_by INTEGER REFERENCES users(id),
     logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -68,6 +69,14 @@ db.exec(`
     passed INTEGER DEFAULT 0
   );
 `);
+
+// Migration: add w3w column if it doesn't exist
+try {
+  db.exec("ALTER TABLE checkins ADD COLUMN w3w TEXT");
+  console.log('Migration: added w3w column to checkins');
+} catch(e) {
+  // Column already exists, ignore
+}
 
 function bootstrapAdmin() {
   const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('netcontrol');
@@ -100,7 +109,7 @@ const queries = {
   getCheckins: db.prepare('SELECT * FROM checkins WHERE session_id = ? ORDER BY seq ASC'),
   getCheckinById: db.prepare('SELECT * FROM checkins WHERE id = ?'),
   getNextSeq: db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM checkins WHERE session_id = ?'),
-  insertCheckin: db.prepare(`INSERT INTO checkins (session_id, seq, callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, address, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+  insertCheckin: db.prepare(`INSERT INTO checkins (session_id, seq, callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, w3w, address, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   deleteCheckin: db.prepare('DELETE FROM checkins WHERE id = ? AND session_id = ?'),
   resequenceCheckins: db.prepare('UPDATE checkins SET seq = (SELECT COUNT(*) FROM checkins c2 WHERE c2.session_id = checkins.session_id AND c2.id <= checkins.id) WHERE session_id = ?'),
 

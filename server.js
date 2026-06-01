@@ -63,9 +63,8 @@ app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
     const r = await fetch(url);
     const txt = await r.text();
     const get = tag => { const m = txt.match(new RegExp('<' + tag + '>([^<]*)</' + tag + '>')); return m ? m[1] : ''; };
-    console.log('QRZ RAW RESPONSE:', txt);
     const fname = get('fname');
-    const lname = get('name');
+    const lname = get('lname');
     const cls = get('class');
     const lat = parseFloat(get('lat'));
     const lon = parseFloat(get('lon'));
@@ -73,7 +72,6 @@ app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
     const addr2 = get('addr2');
     const state = get('state');
     const zip = get('zip');
-    console.log('QRZ PARSED:', { fname, lname, cls, lat, lon });
     const errMatch = txt.match(/<Error>([^<]+)<\/Error>/);
     if (!fname && !lname) {
       return res.status(404).json({ error: errMatch ? errMatch[1] : 'Callsign not found' });
@@ -90,6 +88,25 @@ app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: 'QRZ lookup failed: ' + e.message });
+  }
+});
+
+// WHAT3WORDS PROXY
+app.get('/api/w3w/:lat/:lon', requireAuth, async (req, res) => {
+  const { lat, lon } = req.params;
+  const apiKey = process.env.W3W_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'W3W_API_KEY not configured' });
+  try {
+    const url = `https://api.what3words.com/v3/convert-to-3wa?coordinates=${lat},${lon}&language=en&format=json&key=${apiKey}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data.words) {
+      res.json({ words: data.words, url: `https://what3words.com/${data.words}` });
+    } else {
+      res.status(404).json({ error: data.error ? data.error.message : 'No result' });
+    }
+  } catch (e) {
+    res.status(500).json({ error: 'W3W lookup failed: ' + e.message });
   }
 });
 
@@ -201,13 +218,13 @@ app.get('/api/session/:id/checkins', requireAuth, (req, res) => {
 app.post('/api/checkin', requireRole('netcontrol', 'backup'), (req, res) => {
   const session = queries.getOpenSession.get();
   if (!session) return res.status(404).json({ error: 'No open net session' });
-  const { callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, address, traffic } = req.body;
+  const { callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, w3w, address, traffic } = req.body;
   if (!callsign) return res.status(400).json({ error: 'Callsign required' });
   const { next_seq } = queries.getNextSeq.get(session.id);
   const result = queries.insertCheckin.run(
     session.id, next_seq, callsign.toUpperCase(), name || '', license_class || '',
     time_in || '', has_comments ? 1 : 0, comment_count || 0, comment_notes || '',
-    has_traffic ? 1 : 0, lat || null, lon || null, usng || null, address || '',
+    has_traffic ? 1 : 0, lat || null, lon || null, usng || null, w3w || null, address || '',
     req.session.userId
   );
   if (has_traffic && Array.isArray(traffic)) {
