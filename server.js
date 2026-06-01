@@ -173,17 +173,24 @@ app.get('/api/w3w', requireAuth, async (req, res) => {
   const { lat, lon } = req.query;
   if (!lat || !lon) return res.status(400).json({ error: 'lat and lon required' });
   const apiKey = process.env.W3W_API_KEY;
+  console.log('W3W lookup: lat=' + lat + ' lon=' + lon + ' key=' + (apiKey ? apiKey.substring(0, 8) + '...' : 'NOT SET'));
   if (!apiKey) return res.status(500).json({ error: 'W3W_API_KEY not configured' });
-  console.log('W3W lookup:', lat, lon, 'key prefix:', apiKey.substring(0, 8));
   try {
-    const url = `https://api.what3words.com/v3/convert-to-3wa?coordinates=${encodeURIComponent(lat)},${encodeURIComponent(lon)}&language=en&format=json&key=${apiKey}`;
+    const url = 'https://api.what3words.com/v3/convert-to-3wa?coordinates=' + lat + ',' + lon + '&language=en&format=json&key=' + apiKey;
+    console.log('W3W URL:', url.replace(apiKey, apiKey.substring(0,8) + '...'));
     const r = await fetch(url);
-    const data = await r.json();
-    console.log('W3W response:', JSON.stringify(data).substring(0, 120));
-    if (data.words) res.json({ words: data.words, url: `https://what3words.com/${data.words}` });
-    else res.status(404).json({ error: data.error ? data.error.message : 'No result' });
+    const rawText = await r.text();
+    console.log('W3W raw response (' + r.status + '):', rawText.substring(0, 200));
+    const data = JSON.parse(rawText);
+    if (data.words) {
+      res.json({ words: data.words, url: 'https://what3words.com/' + data.words });
+    } else {
+      const errMsg = data.error ? (data.error.message || data.error.code || JSON.stringify(data.error)) : 'No words in response';
+      console.error('W3W API error:', errMsg);
+      res.status(404).json({ error: errMsg });
+    }
   } catch(e) {
-    console.error('W3W error:', e.message);
+    console.error('W3W exception:', e.message);
     res.status(500).json({ error: 'W3W lookup failed: ' + e.message });
   }
 });

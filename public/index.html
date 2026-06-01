@@ -667,9 +667,11 @@ function onCallsignInput(el) {
         document.getElementById('usng-latlon').textContent = info.lat.toFixed(5) + '°, ' + info.lon.toFixed(5) + '°';
         document.getElementById('usng-display').classList.remove('hidden');
       }
-      if (info.lat && info.lon) {
+      const lat = parseFloat(info.lat);
+      const lon = parseFloat(info.lon);
+      if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
         try {
-          const w3wData = await api('GET', '/w3w?lat=' + encodeURIComponent(info.lat) + '&lon=' + encodeURIComponent(info.lon));
+          const w3wData = await api('GET', '/w3w?lat=' + lat.toFixed(6) + '&lon=' + lon.toFixed(6));
           if (w3wData.words) {
             info.w3w = w3wData.words;
             const w3wEl = document.getElementById('w3w-val');
@@ -677,7 +679,11 @@ function onCallsignInput(el) {
             w3wEl.href = w3wData.url;
             document.getElementById('w3w-display').classList.remove('hidden');
           }
-        } catch(e) { /* w3w lookup failed silently */ }
+        } catch(e) {
+          console.error('W3W frontend error:', e.message);
+        }
+      } else {
+        console.log('W3W skipped - lat/lon not valid:', info.lat, info.lon);
       }
     } else {
       hint.className = 'qrz-hint err'; hint.textContent = '✗ Not found in QRZ';
