@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Net Logger</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/tabler-icons.min.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{--nc-green:#1D9E75;--nc-green-light:#E1F5EE;--nc-green-dark:#085041;--nc-amber:#BA7517;--nc-amber-light:#FAEEDA;--nc-red:#A32D2D;--nc-red-light:#FCEBEB;--nc-blue:#185FA5;--nc-blue-light:#E6F1FB;--bg:#f4f4f0;--surface:#fff;--border:#e2e2de;--text:#1a1a18;--muted:#6b6b68;--radius:8px;--radius-lg:12px;}
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -129,6 +131,11 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
 .empty-state{text-align:center;padding:2.5rem;color:var(--muted);font-size:13px;}
 .empty-state i{font-size:32px;display:block;margin-bottom:8px;opacity:.35;}
+#map{height:calc(100vh - 160px);min-height:400px;border-radius:var(--radius-lg);border:1px solid var(--border);}
+.map-pin-count{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:6px 12px;font-size:12px;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+.map-pin-count strong{color:var(--text);}
+.map-live-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--radius);background:var(--nc-green-light);color:var(--nc-green-dark);display:inline-flex;align-items:center;gap:4px;}
+.map-closed-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--radius);background:#F1EFE8;color:#444441;}
 
 @media(max-width:700px){
   .sidebar{display:none;}
@@ -184,6 +191,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <div class="nav-item" onclick="showPage('checkin')" id="nav-checkin"><i class="ti ti-user-plus"></i> Check-ins</div>
       <div class="nav-item" onclick="showPage('log')" id="nav-log"><i class="ti ti-list"></i> Log</div>
       <div class="nav-item" onclick="showPage('export')" id="nav-export"><i class="ti ti-download"></i> Export</div>
+      <div class="nav-item" onclick="showPage('map')" id="nav-map"><i class="ti ti-map-pin"></i> Map</div>
       <div class="nav-section">Admin</div>
       <div class="nav-item" onclick="showPage('admin')" id="nav-admin"><i class="ti ti-users"></i> Users</div>
     </div>
@@ -300,6 +308,15 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div class="panel-title"><i class="ti ti-eye"></i> PDF preview</div>
           <div id="pdf-preview-body" style="font-size:13px;line-height:1.7"></div>
         </div>
+      </div>
+
+      <!-- MAP PAGE -->
+      <div class="page" id="page-map">
+        <div class="map-pin-count" id="map-status-bar">
+          <i class="ti ti-map-pin" style="font-size:14px;color:var(--nc-green)"></i>
+          <span>No active session</span>
+        </div>
+        <div id="map"></div>
       </div>
 
       <!-- ADMIN PAGE -->
@@ -433,6 +450,7 @@ async function pollSession() {
       renderLiveList();
       renderLog();
       updateStats();
+      if (mapInitialized && document.getElementById('page-map').classList.contains('active')) renderMap();
     }
   } catch (e) {}
 }
@@ -833,9 +851,79 @@ function showPage(name) {
   document.getElementById('nav-' + name).classList.add('active');
   if (name === 'log') { renderLog(); updateStats(); }
   if (name === 'admin') loadUsers();
+  if (name === 'map') { initMap(); renderMap(); }
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+// MAP
+let netMap = null;
+let mapMarkers = [];
+let mapInitialized = false;
+
+function initMap() {
+  if (mapInitialized) return;
+  netMap = L.map('map').setView([39.5, -98.35], 4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 18
+  }).addTo(netMap);
+  mapInitialized = true;
+}
+
+function renderMap() {
+  if (!netMap) return;
+  const s = appState.session;
+  const bar = document.getElementById('map-status-bar');
+  const withCoords = appState.checkins.filter(c => c.lat && c.lon);
+
+  if (!s) {
+    bar.innerHTML = '<i class="ti ti-map-pin" style="font-size:14px;color:var(--muted)"></i><span>No active session</span>';
+    return;
+  }
+
+  const isOpen = s.status === 'open';
+  const badge = isOpen
+    ? '<span class="map-live-badge"><span style="width:6px;height:6px;border-radius:50%;background:var(--nc-green);display:inline-block"></span> LIVE</span>'
+    : '<span class="map-closed-badge">Session closed</span>';
+
+  bar.innerHTML = '<i class="ti ti-map-pin" style="font-size:14px;color:var(--nc-green)"></i>' +
+    '<strong>' + withCoords.length + ' of ' + appState.checkins.length + ' check-ins mapped</strong> ' + badge;
+
+  // Remove old markers
+  mapMarkers.forEach(m => netMap.removeLayer(m));
+  mapMarkers = [];
+
+  withCoords.forEach(ci => {
+    const color = ci.license_class === 'E' ? '#085041' : ci.license_class === 'G' ? '#185FA5' : ci.license_class === 'T' ? '#BA7517' : '#A32D2D';
+    const icon = L.divIcon({
+      className: '',
+      html: '<div style="background:' + color + ';color:#fff;font-family:monospace;font-weight:700;font-size:11px;padding:3px 7px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.8)">' + ci.callsign + '</div>',
+      iconAnchor: [0, 0]
+    });
+    const trafficLines = (ci.traffic || []).map(t => '<div style="font-size:11px;color:#555">' + t.precedence + ' · ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' ✓' : '') + '</div>').join('');
+    const popup = '<div style="font-family:sans-serif;min-width:160px">' +
+      '<div style="font-family:monospace;font-weight:700;font-size:15px;margin-bottom:4px">' + ci.callsign + '</div>' +
+      '<div style="font-size:13px;margin-bottom:2px">' + (ci.name || 'Unknown') + '</div>' +
+      '<div style="font-size:11px;color:#666;margin-bottom:4px">Class: ' + (ci.license_class || '?') + ' · Check-in #' + ci.seq + ' at ' + ci.time_in + '</div>' +
+      (ci.usng ? '<div style="font-size:11px;font-family:monospace;color:#185FA5;margin-bottom:4px">' + ci.usng + '</div>' : '') +
+      (ci.address ? '<div style="font-size:11px;color:#888">' + ci.address + '</div>' : '') +
+      (trafficLines ? '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px">' + trafficLines + '</div>' : '') +
+      '</div>';
+    const marker = L.marker([ci.lat, ci.lon], { icon }).addTo(netMap);
+    marker.bindPopup(popup);
+    mapMarkers.push(marker);
+  });
+
+  // Fit map to markers if any
+  if (withCoords.length > 0) {
+    const group = L.featureGroup(mapMarkers);
+    netMap.fitBounds(group.getBounds().pad(0.2));
+  }
+
+  // Invalidate size in case the tab was hidden when map was initialized
+  setTimeout(() => netMap.invalidateSize(), 100);
+}
 
 boot();
 </script>
