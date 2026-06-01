@@ -65,7 +65,7 @@ app.get('/api/qrz/lookup/:callsign', requireAuth, async (req, res) => {
     const get = tag => { const m = txt.match(new RegExp('<' + tag + '>([^<]*)</' + tag + '>')); return m ? m[1] : ''; };
     console.log('QRZ RAW RESPONSE:', txt);
     const fname = get('fname');
-    const lname = get('lname');
+    const lname = get('name');
     const cls = get('class');
     const lat = parseFloat(get('lat'));
     const lon = parseFloat(get('lon'));
