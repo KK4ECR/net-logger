@@ -338,7 +338,12 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <button class="btn" onclick="clearCI()"><i class="ti ti-x"></i> Clear</button>
           </div>
         </div>
-        <div id="live-list" style="margin-top:1rem"></div>
+        <div style="margin-top:1rem;margin-bottom:0.5rem;display:flex;justify-content:flex-end">
+          <button class="btn" onclick="openStatusBoard()" style="font-size:12px;gap:6px">
+            <i class="ti ti-layout-dashboard"></i> Open Status Board
+          </button>
+        </div>
+        <div id="live-list" style="margin-top:0.5rem"></div>
       </div>
 
       <!-- LOG PAGE -->
@@ -1009,6 +1014,11 @@ function showPage(name) {
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+function openStatusBoard() {
+  const url = window.location.origin + '/status-board.html';
+  window.open(url, 'NetStatusBoard', 'width=1200,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes');
+}
 
 function showRequestForm() {
   document.getElementById('signin-form').style.display = 'none';

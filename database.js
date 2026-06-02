@@ -84,6 +84,9 @@ db.exec(`
 `);
 
 // Migrations - run silently, ignore if column already exists
+// Add announcements_given column if not exists
+try { db.exec('ALTER TABLE checkins ADD COLUMN announcements_given INTEGER DEFAULT 0'); } catch(e) {}
+
 ['email', 'full_name'].forEach(col => {
   try { db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`); } catch(e) {}
 });

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Net Status Board</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/tabler-icons.min.css" />
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --green: #1D9E75; --green-dark: #085041; --green-light: #0d3d2e;
+  --amber: #d4890a; --amber-light: #3d2800;
+  --blue: #3b82f6; --blue-light: #0f1f3d;
+  --red: #ef4444; --red-light: #3d0f0f;
+  --bg: #0a0a0a; --surface: #141414; --surface2: #1c1c1c;
+  --border: #2a2a2a; --text: #f0f0ee; --muted: #888884;
+  --radius: 8px;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* HEADER */
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-left i { font-size: 24px; color: var(--green); }
+.net-name { font-size: 18px; font-weight: 700; }
+.net-meta { font-size: 13px; color: var(--muted); }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.clock { font-family: monospace; font-size: 22px; font-weight: 700; color: var(--green); letter-spacing: 0.05em; }
+.net-duration { font-size: 13px; color: var(--muted); text-align: right; }
+.live-dot { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--green); }
+.pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.3)} }
+.closed-badge { font-size: 12px; font-weight: 700; color: var(--red); padding: 3px 10px; border-radius: var(--radius); background: var(--red-light); border: 1px solid var(--red); }
+
+/* STAT CARDS */
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 20px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; }
+.stat-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.stat-val { font-size: 42px; font-weight: 800; line-height: 1; }
+.stat-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.stat-card.green .stat-val { color: var(--green); }
+.stat-card.amber .stat-val { color: var(--amber); }
+.stat-card.blue .stat-val { color: var(--blue); }
+.stat-card.red .stat-val { color: var(--red); }
+
+/* TRAFFIC SUMMARY */
+.prec-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 0 20px 16px; }
+.prec-card { border-radius: var(--radius); padding: 12px 16px; border: 1px solid; }
+.prec-card.emergency { background: var(--red-light); border-color: var(--red); }
+.prec-card.priority { background: var(--blue-light); border-color: var(--blue); }
+.prec-card.welfare { background: var(--amber-light); border-color: var(--amber); }
+.prec-card.routine { background: var(--green-light); border-color: var(--green); }
+.prec-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+.prec-card.emergency .prec-label { color: var(--red); }
+.prec-card.priority .prec-label { color: var(--blue); }
+.prec-card.welfare .prec-label { color: var(--amber); }
+.prec-card.routine .prec-label { color: var(--green); }
+.prec-nums { display: flex; gap: 16px; align-items: baseline; }
+.prec-num-big { font-size: 36px; font-weight: 800; line-height: 1; }
+.prec-card.emergency .prec-num-big { color: var(--red); }
+.prec-card.priority .prec-num-big { color: var(--blue); }
+.prec-card.welfare .prec-num-big { color: var(--amber); }
+.prec-card.routine .prec-num-big { color: var(--green); }
+.prec-num-sub { font-size: 13px; color: var(--muted); }
+.prec-num-sub span { color: var(--text); font-weight: 600; }
+
+/* MAIN CONTENT */
+.main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 20px 20px; }
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.section.full-width { grid-column: span 2; }
+.section-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; display: flex; align-items: center; gap: 8px; }
+.section-count { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius); }
+.ann-count { background: rgba(212,137,10,0.2); color: var(--amber); }
+.traf-count { background: rgba(239,68,68,0.15); color: var(--red); }
+
+/* ITEM ROWS */
+.item-list { max-height: 320px; overflow-y: auto; }
+.item-row { display: grid; padding: 10px 16px; border-bottom: 1px solid var(--border); align-items: center; gap: 10px; }
+.item-row:last-child { border-bottom: none; }
+.item-row.ann-row { grid-template-columns: 110px 1fr auto auto; }
+.item-row.traf-row { grid-template-columns: 80px 110px 1fr 90px auto; }
+.item-call { font-family: monospace; font-weight: 800; font-size: 15px; letter-spacing: 0.04em; }
+.item-name { font-size: 13px; color: var(--muted); margin-top: 1px; }
+.item-notes { font-size: 13px; color: var(--text); }
+.item-count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.item-to { font-size: 13px; color: var(--text); }
+.prec-badge { font-size: 10px; font-weight: 800; padding: 3px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+.badge-emergency { background: var(--red-light); color: var(--red); border: 1px solid var(--red); }
+.badge-priority { background: var(--blue-light); color: var(--blue); border: 1px solid var(--blue); }
+.badge-welfare { background: var(--amber-light); color: var(--amber); border: 1px solid var(--amber); }
+.badge-routine { background: var(--green-light); color: var(--green); border: 1px solid var(--green); }
+
+/* BUTTONS */
+.btn-given { height: 30px; padding: 0 12px; border-radius: var(--radius); border: 1px solid var(--amber); background: var(--amber-light); color: var(--amber); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; transition: background 0.1s; }
+.btn-given:hover { background: var(--amber); color: #000; }
+.btn-passed { height: 30px; padding: 0 12px; border-radius: var(--radius); border: 1px solid var(--green); background: var(--green-light); color: var(--green); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; transition: background 0.1s; }
+.btn-passed:hover { background: var(--green); color: #000; }
+
+.empty-row { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+.no-session { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; gap: 12px; color: var(--muted); }
+.no-session i { font-size: 48px; opacity: 0.3; }
+.no-session p { font-size: 16px; }
+
+/* SCROLLBAR */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+@media(max-width:900px) {
+  .stats-row, .prec-grid { grid-template-columns: repeat(2,1fr); }
+  .main-grid { grid-template-columns: 1fr; }
+  .section.full-width { grid-column: span 1; }
+  .item-row.traf-row { grid-template-columns: 80px 1fr auto; }
+}
+</style>
+</head>
+<body>
+
+<div id="no-session" class="no-session" style="display:none">
+  <i class="ti ti-radio"></i>
+  <p>No active net session</p>
+  <p style="font-size:13px">Open a net from the Net Logger to see the status board</p>
+</div>
+
+<div id="board" style="display:none">
+  <div class="header">
+    <div class="header-left">
+      <i class="ti ti-radio"></i>
+      <div>
+        <div class="net-name" id="b-net-name">—</div>
+        <div class="net-meta" id="b-net-meta">—</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div>
+        <div class="clock" id="b-clock">00:00:00</div>
+        <div class="net-duration" id="b-duration">Net duration: —</div>
+      </div>
+      <div class="live-dot" id="b-live-dot"><span class="pulse"></span> LIVE</div>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-card green">
+      <div class="stat-label">Total Check-ins</div>
+      <div class="stat-val" id="b-checkins">0</div>
+      <div class="stat-sub">stations checked in</div>
+    </div>
+    <div class="stat-card amber">
+      <div class="stat-label">Announcements</div>
+      <div class="stat-val" id="b-ann-total">0</div>
+      <div class="stat-sub"><span id="b-ann-pending" style="color:var(--amber);font-weight:700">0</span> remaining to give</div>
+    </div>
+    <div class="stat-card blue">
+      <div class="stat-label">Traffic Total</div>
+      <div class="stat-val" id="b-traf-total">0</div>
+      <div class="stat-sub"><span id="b-traf-pending" style="color:var(--blue);font-weight:700">0</span> remaining to pass</div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-label">Emergency / Priority</div>
+      <div class="stat-val" id="b-urgent">0</div>
+      <div class="stat-sub">high precedence pending</div>
+    </div>
+  </div>
+
+  <div class="prec-grid">
+    <div class="prec-card emergency">
+      <div class="prec-label">Emergency</div>
+      <div class="prec-nums">
+        <div class="prec-num-big" id="b-prec-e-pending">0</div>
+        <div class="prec-num-sub">pending / <span id="b-prec-e-total">0</span> total</div>
+      </div>
+    </div>
+    <div class="prec-card priority">
+      <div class="prec-label">Priority</div>
+      <div class="prec-nums">
+        <div class="prec-num-big" id="b-prec-p-pending">0</div>
+        <div class="prec-num-sub">pending / <span id="b-prec-p-total">0</span> total</div>
+      </div>
+    </div>
+    <div class="prec-card welfare">
+      <div class="prec-label">Welfare</div>
+      <div class="prec-nums">
+        <div class="prec-num-big" id="b-prec-w-pending">0</div>
+        <div class="prec-num-sub">pending / <span id="b-prec-w-total">0</span> total</div>
+      </div>
+    </div>
+    <div class="prec-card routine">
+      <div class="prec-label">Routine</div>
+      <div class="prec-nums">
+        <div class="prec-num-big" id="b-prec-r-pending">0</div>
+        <div class="prec-num-sub">pending / <span id="b-prec-r-total">0</span> total</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- PENDING ANNOUNCEMENTS -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title" style="color:var(--amber)">
+          <i class="ti ti-message-circle" style="font-size:16px"></i>
+          Pending Announcements
+        </div>
+        <span class="section-count ann-count" id="b-ann-count-badge">0</span>
+      </div>
+      <div class="item-list" id="b-ann-list">
+        <div class="empty-row">No pending announcements</div>
+      </div>
+    </div>
+
+    <!-- PENDING TRAFFIC -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title" style="color:var(--red)">
+          <i class="ti ti-mail-forward" style="font-size:16px"></i>
+          Pending Traffic
+        </div>
+        <span class="section-count traf-count" id="b-traf-count-badge">0</span>
+      </div>
+      <div class="item-list" id="b-traf-list">
+        <div class="empty-row">No pending traffic</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let openedAt = null;
+let clockTimer = null;
+let pollTimer = null;
+let sessionOpen = true;
+
+function startClock() {
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    const now = new Date();
+    document.getElementById('b-clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    if (openedAt) {
+      const diff = Math.floor((now - new Date(openedAt)) / 1000);
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      const s = diff % 60;
+      document.getElementById('b-duration').textContent = 'Net duration: ' + (h > 0 ? h + 'h ' : '') + m + 'm ' + s + 's';
+    }
+  }, 1000);
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status-board', { credentials: 'include' });
+    if (r.status === 401) { window.location.href = '/'; return; }
+    const data = await r.json();
+    if (!data.active) {
+      document.getElementById('no-session').style.display = 'flex';
+      document.getElementById('board').style.display = 'none';
+      return;
+    }
+    document.getElementById('no-session').style.display = 'none';
+    document.getElementById('board').style.display = 'block';
+    renderBoard(data);
+  } catch(e) { console.error('Status board fetch error:', e); }
+}
+
+function renderBoard(data) {
+  const s = data.session;
+  openedAt = s.opened_at;
+  sessionOpen = s.status === 'open';
+
+  // Header
+  document.getElementById('b-net-name').textContent = s.net_name || 'Net Logger';
+  document.getElementById('b-net-meta').textContent = [
+    s.nc_callsign ? 'Net Control: ' + s.nc_callsign : '',
+    s.bnc_callsign ? 'Backup: ' + s.bnc_callsign : '',
+    s.frequency ? s.frequency + ' MHz' : '',
+    s.mode || ''
+  ].filter(Boolean).join('  ·  ');
+
+  const liveDot = document.getElementById('b-live-dot');
+  if (!sessionOpen) {
+    liveDot.innerHTML = '<span class="closed-badge">NET CLOSED</span>';
+  } else {
+    liveDot.innerHTML = '<span class="pulse"></span> LIVE';
+    liveDot.style.color = 'var(--green)';
+  }
+
+  // Stat cards
+  const tc = data.traffic_counts;
+  const totalTraffic = Object.values(tc).reduce((s, v) => s + v.total, 0);
+  const pendingTraffic = Object.values(tc).reduce((s, v) => s + v.pending, 0);
+  const totalAnn = data.announcements_total;
+  const pendingAnn = data.announcements_pending.reduce((s, a) => s + a.remaining, 0);
+  const urgentPending = (tc['Emergency'] ? tc['Emergency'].pending : 0) + (tc['Priority'] ? tc['Priority'].pending : 0);
+
+  document.getElementById('b-checkins').textContent = data.checkins_total;
+  document.getElementById('b-ann-total').textContent = totalAnn;
+  document.getElementById('b-ann-pending').textContent = pendingAnn;
+  document.getElementById('b-traf-total').textContent = totalTraffic;
+  document.getElementById('b-traf-pending').textContent = pendingTraffic;
+  document.getElementById('b-urgent').textContent = urgentPending;
+
+  // Precedence cards
+  const precMap = { 'Emergency': 'e', 'Priority': 'p', 'Welfare': 'w', 'Routine': 'r' };
+  Object.entries(precMap).forEach(([prec, key]) => {
+    const d = tc[prec] || { total: 0, pending: 0 };
+    document.getElementById('b-prec-' + key + '-pending').textContent = d.pending;
+    document.getElementById('b-prec-' + key + '-total').textContent = d.total;
+  });
+
+  // Badge counts
+  document.getElementById('b-ann-count-badge').textContent = pendingAnn;
+  document.getElementById('b-traf-count-badge').textContent = pendingTraffic;
+
+  // Announcements list
+  const annList = document.getElementById('b-ann-list');
+  if (!data.announcements_pending.length) {
+    annList.innerHTML = '<div class="empty-row">No pending announcements</div>';
+  } else {
+    annList.innerHTML = data.announcements_pending.map(a => `
+      <div class="item-row ann-row">
+        <div>
+          <div class="item-call">${a.callsign}</div>
+          <div class="item-name">${a.name || ''}</div>
+        </div>
+        <div>
+          <div class="item-notes">${a.notes || 'No description'}</div>
+          <div class="item-count">${a.remaining} of ${a.count} remaining</div>
+        </div>
+        <div class="item-count">${a.count > 1 ? a.count + ' ann.' : '1 ann.'}</div>
+        ${sessionOpen ? `<button class="btn-given" onclick="markGiven(${a.checkin_id}, this)"><i class="ti ti-check" style="font-size:12px"></i> Given</button>` : ''}
+      </div>`).join('');
+  }
+
+  // Traffic list
+  const trafList = document.getElementById('b-traf-list');
+  if (!data.pending_traffic.length) {
+    trafList.innerHTML = '<div class="empty-row">No pending traffic</div>';
+  } else {
+    // Sort by precedence order
+    const order = ['Emergency','Priority','Welfare','Routine'];
+    const sorted = [...data.pending_traffic].sort((a,b) => order.indexOf(a.precedence) - order.indexOf(b.precedence));
+    trafList.innerHTML = sorted.map(t => `
+      <div class="item-row traf-row">
+        <span class="prec-badge badge-${t.precedence.toLowerCase()}">${t.precedence}</span>
+        <div>
+          <div class="item-call">${t.callsign}</div>
+          <div class="item-name">${t.name || ''}</div>
+        </div>
+        <div>
+          <div class="item-to">To: ${t.deliver_to || '—'}</div>
+          <div class="item-count">${t.type}</div>
+        </div>
+        ${sessionOpen ? `<button class="btn-passed" onclick="markPassed(${t.id}, this)"><i class="ti ti-check" style="font-size:12px"></i> Passed</button>` : ''}
+      </div>`).join('');
+  }
+}
+
+async function markGiven(checkinId, btn) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    await fetch('/api/checkin/' + checkinId + '/announcement-given', { method: 'POST', credentials: 'include' });
+    await fetchStatus();
+  } catch(e) { btn.disabled = false; btn.textContent = 'Given'; }
+}
+
+async function markPassed(trafficId, btn) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    await fetch('/api/traffic/' + trafficId + '/passed', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ passed: true })
+    });
+    await fetchStatus();
+  } catch(e) { btn.disabled = false; btn.textContent = 'Passed'; }
+}
+
+// Boot
+startClock();
+fetchStatus();
+pollTimer = setInterval(fetchStatus, 5000);
+</script>
+</body>
+</html>

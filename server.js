@@ -381,6 +381,88 @@ app.put('/api/traffic/:id/passed', requireRole('netcontrol', 'backup'), (req, re
   res.json({ ok: true });
 });
 
+// STATUS BOARD - serves the status board page and data
+app.get('/status-board.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'status-board.html'));
+});
+
+app.get('/api/status-board', requireAuth, (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.json({ active: false });
+  const checkins = getFullCheckins(session.id);
+  
+  // Build pending announcements list
+  const pendingAnnouncements = [];
+  checkins.forEach(ci => {
+    if (ci.has_comments && ci.comment_count > 0) {
+      const givenCount = ci.announcements_given || 0;
+      const remaining = ci.comment_count - givenCount;
+      if (remaining > 0) {
+        pendingAnnouncements.push({
+          checkin_id: ci.id,
+          callsign: ci.callsign,
+          name: ci.name,
+          count: ci.comment_count,
+          given: givenCount,
+          remaining,
+          notes: ci.comment_notes
+        });
+      }
+    }
+  });
+
+  // Build pending traffic list grouped by precedence
+  const allTraffic = [];
+  checkins.forEach(ci => {
+    (ci.traffic || []).forEach(t => {
+      allTraffic.push({
+        id: t.id,
+        checkin_id: ci.id,
+        callsign: ci.callsign,
+        name: ci.name,
+        precedence: t.precedence,
+        type: t.type,
+        deliver_to: t.deliver_to,
+        passed: t.passed
+      });
+    });
+  });
+
+  const pendingTraffic = allTraffic.filter(t => !t.passed);
+  const passedTraffic = allTraffic.filter(t => t.passed);
+
+  // Counts by precedence
+  const trafficCounts = {};
+  ['Emergency','Priority','Welfare','Routine'].forEach(p => {
+    trafficCounts[p] = {
+      total: allTraffic.filter(t => t.precedence === p).length,
+      pending: pendingTraffic.filter(t => t.precedence === p).length,
+      passed: passedTraffic.filter(t => t.precedence === p).length
+    };
+  });
+
+  res.json({
+    active: true,
+    session,
+    checkins_total: checkins.length,
+    announcements_total: checkins.reduce((sum, ci) => sum + (ci.has_comments ? ci.comment_count : 0), 0),
+    announcements_pending: pendingAnnouncements,
+    traffic_counts: trafficCounts,
+    pending_traffic: pendingTraffic,
+    opened_at: session.opened_at
+  });
+});
+
+// Mark announcement as given
+app.post('/api/checkin/:id/announcement-given', requireRole('netcontrol', 'backup'), (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.status(404).json({ error: 'No open session' });
+  try {
+    db.prepare('UPDATE checkins SET announcements_given = COALESCE(announcements_given, 0) + 1 WHERE id = ? AND session_id = ?').run(req.params.id, session.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
