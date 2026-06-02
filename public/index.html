@@ -558,7 +558,7 @@ function updateSessionUI() {
   document.getElementById('btn-open-net').disabled = isOpen || appState.user.role !== 'netcontrol';
   document.getElementById('btn-close-net').disabled = !isOpen || appState.user.role !== 'netcontrol';
   if (s.opened_at) {
-    const opened = new Date(s.opened_at);
+    const opened = parseUTC(s.opened_at);
     document.getElementById('net-time-display').textContent = 'Opened: ' + opened.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
   if (s.net_name) document.getElementById('net-name').value = s.net_name;
@@ -845,8 +845,10 @@ function updateStats() {
   document.getElementById('s-comments').textContent = c.filter(x => x.has_comments).length;
   document.getElementById('s-usng').textContent = c.filter(x => x.usng).length;
   if (appState.session?.opened_at) {
-    const end = appState.session.closed_at ? new Date(appState.session.closed_at) : new Date();
-    document.getElementById('s-dur').textContent = Math.round((end - new Date(appState.session.opened_at)) / 60000) + 'm';
+    const opened = parseUTC(appState.session.opened_at);
+    const end = appState.session.closed_at ? parseUTC(appState.session.closed_at) : new Date();
+    const mins = Math.round((end - opened) / 60000);
+    document.getElementById('s-dur').textContent = mins >= 0 ? mins + 'm' : '--';
   }
 }
 
@@ -866,7 +868,7 @@ function exportCSV() {
 
 function exportPDF() {
   const s = appState.session || {};
-  const dur = s.opened_at && s.closed_at ? Math.round((new Date(s.closed_at) - new Date(s.opened_at)) / 60000) + ' min' : '';
+  const dur = s.opened_at && s.closed_at ? Math.round((parseUTC(s.closed_at) - parseUTC(s.opened_at)) / 60000) + ' min' : '';
   const html = `<div style="font-family:sans-serif;font-size:12px;line-height:1.8;max-width:800px">
     <div style="border-bottom:2px solid #1D9E75;padding-bottom:10px;margin-bottom:14px">
       <div style="font-size:20px;font-weight:700;margin-bottom:4px">${s.net_name || 'Net Log'}</div>
@@ -1043,6 +1045,13 @@ function showPage(name) {
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+function parseUTC(dtStr) {
+  if (!dtStr) return null;
+  // SQLite stores as "2026-06-02 19:00:00" without timezone - force UTC
+  if (dtStr.includes('T') || dtStr.endsWith('Z')) return new Date(dtStr);
+  return new Date(dtStr.replace(' ', 'T') + 'Z');
+}
 
 function openStatusBoard() {
   const url = window.location.origin + '/status-board.html';

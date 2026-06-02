@@ -248,11 +248,15 @@ function startClock() {
     const now = new Date();
     document.getElementById('b-clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     if (openedAt) {
-      const diff = Math.floor((now - new Date(openedAt)) / 1000);
-      const h = Math.floor(diff / 3600);
-      const m = Math.floor((diff % 3600) / 60);
-      const s = diff % 60;
-      document.getElementById('b-duration').textContent = 'Net duration: ' + (h > 0 ? h + 'h ' : '') + m + 'm ' + s + 's';
+      // Ensure SQLite datetime string is parsed as UTC
+      const openedStr = openedAt.includes('T') || openedAt.endsWith('Z') ? openedAt : openedAt.replace(' ', 'T') + 'Z';
+      const diff = Math.floor((now - new Date(openedStr)) / 1000);
+      if (diff >= 0) {
+        const h = Math.floor(diff / 3600);
+        const m = Math.floor((diff % 3600) / 60);
+        const s = diff % 60;
+        document.getElementById('b-duration').textContent = 'Net duration: ' + (h > 0 ? h + 'h ' : '') + m + 'm ' + s + 's';
+      }
     }
   }, 1000);
 }
