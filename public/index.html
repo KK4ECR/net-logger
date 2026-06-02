@@ -338,9 +338,12 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <button class="btn" onclick="clearCI()"><i class="ti ti-x"></i> Clear</button>
           </div>
         </div>
-        <div style="margin-top:1rem;margin-bottom:0.5rem;display:flex;justify-content:flex-end">
-          <button class="btn" onclick="openStatusBoard()" style="font-size:12px;gap:6px">
+        <div style="margin-top:1rem;margin-bottom:0.5rem;display:flex;justify-content:flex-end;align-items:center;gap:8px">
+          <a href="/status-board.html" target="_blank" rel="noopener" class="btn" style="font-size:12px;gap:6px;text-decoration:none;background:#185FA5;color:#fff;border-color:#0c3d6e">
             <i class="ti ti-layout-dashboard"></i> Open Status Board
+          </a>
+          <button class="btn" id="btn-close-net-checkin" onclick="closeNetFromCheckin()" style="font-size:12px;background:#A32D2D;color:#fff;border-color:#7a1f1f">
+            <i class="ti ti-player-stop"></i> Close Net
           </button>
         </div>
         <div id="live-list" style="margin-top:0.5rem"></div>
@@ -482,6 +485,8 @@ function showApp() {
   applyRoleUI();
   loadCurrentSession();
   if (appState.user.role === 'netcontrol') checkPendingBadge();
+  updateCloseButtonState();
+  updateCloseButtonState();
   document.getElementById('net-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('ci-time').value = nowTime();
   document.getElementById('net-start-time').value = nowTime();
@@ -536,6 +541,8 @@ async function pollSession() {
       updateStats();
       if (mapInitialized && document.getElementById('page-map').classList.contains('active')) renderMap();
       if (appState.user && appState.user.role === 'netcontrol') checkPendingBadge();
+      updateCloseButtonState();
+      updateCloseButtonState();
     }
   } catch (e) {}
 }
@@ -586,8 +593,30 @@ async function closeNet() {
     await api('POST', '/session/close');
     appState.session.status = 'closed';
     updateSessionUI();
+    updateCloseButtonState();
     showPage('log');
   } catch (e) { alert(e.message); }
+}
+
+async function closeNetFromCheckin() {
+  if (appState.user && appState.user.role !== 'netcontrol') { alert('Only Net Control can close the net.'); return; }
+  if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
+  if (!confirm('Close the net? The log stays available for export.')) return;
+  try {
+    await api('POST', '/session/close');
+    appState.session.status = 'closed';
+    updateSessionUI();
+    updateCloseButtonState();
+    showPage('log');
+  } catch(e) { alert(e.message); }
+}
+
+function updateCloseButtonState() {
+  const btn = document.getElementById('btn-close-net-checkin');
+  if (!btn) return;
+  const isOpen = appState.session && appState.session.status === 'open';
+  const isNC = appState.user && appState.user.role === 'netcontrol';
+  btn.disabled = !isOpen || !isNC;
 }
 
 async function testQRZ() {
@@ -1017,7 +1046,11 @@ function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit',
 
 function openStatusBoard() {
   const url = window.location.origin + '/status-board.html';
-  window.open(url, 'NetStatusBoard', 'width=1200,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes');
+  const w = window.open(url, 'NetStatusBoard', 'width=1200,height=800,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes');
+  if (!w || w.closed || typeof w.closed === 'undefined') {
+    // Popup blocked - navigate directly
+    window.location.href = url;
+  }
 }
 
 function showRequestForm() {
