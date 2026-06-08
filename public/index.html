@@ -374,10 +374,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <button class="btn amber" onclick="exportPDF()"><i class="ti ti-file-text"></i> Export PDF</button>
           </div>
         </div>
-        <div class="panel hidden" id="pdf-preview-panel">
-          <div class="panel-title"><i class="ti ti-eye"></i> PDF preview</div>
-          <div id="pdf-preview-body" style="font-size:13px;line-height:1.7"></div>
-        </div>
+
       </div>
 
       <!-- MAP PAGE -->
@@ -876,52 +873,80 @@ function exportCSV() {
 function exportPDF() {
   const s = appState.session || {};
   const dur = s.opened_at && s.closed_at ? Math.round((parseUTC(s.closed_at) - parseUTC(s.opened_at)) / 60000) + ' min' : '';
-  const html = `<div style="font-family:sans-serif;font-size:12px;line-height:1.8;max-width:800px">
-    <div style="border-bottom:2px solid #1D9E75;padding-bottom:10px;margin-bottom:14px">
-      <div style="font-size:20px;font-weight:700;margin-bottom:4px">${s.net_name || 'Net Log'}</div>
-      <div style="color:#666">Net Control: ${s.nc_callsign || 'N/A'}${s.bnc_callsign ? ' · Backup: ' + s.bnc_callsign : ''} · ${s.frequency || ''} MHz ${s.mode || ''} · ${s.net_date || ''}</div>
-      <div style="color:#666">Opened: ${s.opened_at ? new Date(s.opened_at).toLocaleString() : 'N/A'} · Closed: ${s.closed_at ? new Date(s.closed_at).toLocaleString() : 'N/A'}${dur ? ' · Duration: ' + dur : ''}</div>
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead><tr style="border-bottom:1px solid #ccc">
-        <th style="text-align:left;padding:4px 6px;color:#666">#</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">Callsign</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">Name</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">Class</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">Time</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">USNG (1m)</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">what3words</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">Logged by</th>
-        <th style="text-align:left;padding:4px 6px;color:#666">Notes / Traffic</th>
-      </tr></thead>
-      <tbody>${appState.checkins.map((ci, i) => {
-        const notes = [];
-        if (ci.has_comments) notes.push(ci.comment_count + ' comment(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : ''));
-        (ci.traffic || []).forEach(t => notes.push('[' + t.precedence + '] ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' (passed)' : '')));
-        return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
-          <td style="padding:4px 6px;color:#999">${ci.seq}</td>
-          <td style="padding:4px 6px;font-weight:700;font-family:monospace">${ci.callsign}</td>
-          <td style="padding:4px 6px">${ci.name || ''}</td>
-          <td style="padding:4px 6px">${ci.license_class || ''}</td>
-          <td style="padding:4px 6px;font-family:monospace">${ci.time_in}</td>
-          <td style="padding:4px 6px;font-family:monospace;color:#185FA5">${ci.usng || '—'}</td>
-          <td style="padding:4px 6px;color:#E11F26;font-weight:500">${ci.w3w ? '///' + ci.w3w : '—'}</td>
-          <td style="padding:4px 6px;color:#666">${ci.logged_by_callsign || ''}</td>
-          <td style="padding:4px 6px;color:#555">${notes.join(' · ')}</td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table>
-    <div style="margin-top:12px;font-size:11px;color:#666;border-top:0.5px solid #ddd;padding-top:8px">
-      Total check-ins: ${appState.checkins.length} · With USNG: ${appState.checkins.filter(c => c.usng).length} · With traffic: ${appState.checkins.filter(c => c.has_traffic).length} · With comments: ${appState.checkins.filter(c => c.has_comments).length}
-    </div>
-    <div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:40px">
-      <div style="border-top:0.5px solid #ccc;padding-top:6px;font-size:11px;color:#666">Net Control: ${s.nc_callsign || '_____________'}</div>
-      <div style="border-top:0.5px solid #ccc;padding-top:6px;font-size:11px;color:#666">Date: ${s.net_date || '_____________'}</div>
-    </div>
-  </div>`;
-  document.getElementById('pdf-preview-body').innerHTML = html;
-  document.getElementById('pdf-preview-panel').classList.remove('hidden');
-  setTimeout(() => window.print(), 300);
+  const openedStr = s.opened_at ? parseUTC(s.opened_at).toLocaleString() : 'N/A';
+  const closedStr = s.closed_at ? parseUTC(s.closed_at).toLocaleString() : 'N/A';
+
+  const rows = appState.checkins.map((ci, i) => {
+    const notes = [];
+    if (ci.has_comments) notes.push(ci.comment_count + ' comment(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : ''));
+    (ci.traffic || []).forEach(t => notes.push('[' + t.precedence + '] ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' (passed)' : '')));
+    return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
+      <td style="padding:5px 7px;color:#999;white-space:nowrap">${ci.seq}</td>
+      <td style="padding:5px 7px;font-weight:700;font-family:monospace;white-space:nowrap">${ci.callsign}</td>
+      <td style="padding:5px 7px">${ci.name || ''}</td>
+      <td style="padding:5px 7px;white-space:nowrap">${ci.license_class || ''}</td>
+      <td style="padding:5px 7px;font-family:monospace;white-space:nowrap">${ci.time_in}</td>
+      <td style="padding:5px 7px;font-family:monospace;color:#185FA5;white-space:nowrap;font-size:10px">${ci.usng || '&mdash;'}</td>
+      <td style="padding:5px 7px;color:#E11F26;font-weight:600;white-space:nowrap;font-size:10px">${ci.w3w ? '///' + ci.w3w : '&mdash;'}</td>
+      <td style="padding:5px 7px;color:#666;white-space:nowrap">${ci.logged_by_callsign || ''}</td>
+      <td style="padding:5px 7px;color:#555;font-size:10px">${notes.join(' &middot; ')}</td>
+    </tr>`;
+  }).join('');
+
+  const fullHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>${(s.net_name || 'Net Log').replace(/</g,'&lt;')} &mdash; ${s.net_date || ''}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #1a1a18; background: #fff; padding: 24px 28px; }
+  @page { size: landscape; margin: 1.5cm; }
+  @media print { body { padding: 0; } .no-print { display: none !important; } }
+  .header { border-bottom: 2.5px solid #1D9E75; padding-bottom: 10px; margin-bottom: 16px; }
+  .net-title { font-size: 22px; font-weight: 700; color: #085041; margin-bottom: 4px; }
+  .net-meta { font-size: 12px; color: #555; margin-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { text-align: left; padding: 6px 7px; font-size: 10px; font-weight: 700; color: #555; border-bottom: 1.5px solid #ccc; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; background: #f4f4f0; }
+  td { vertical-align: top; }
+  .footer-row { margin-top: 14px; font-size: 10px; color: #666; border-top: 0.5px solid #ddd; padding-top: 8px; }
+  .sig-row { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 40px; }
+  .sig-line { border-top: 0.5px solid #ccc; padding-top: 6px; font-size: 10px; color: #666; }
+  .print-btn { display: inline-block; margin-bottom: 16px; padding: 8px 16px; background: #1D9E75; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: Arial, sans-serif; }
+  .print-btn:hover { background: #085041; }
+</style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">&#128438; Print / Save as PDF</button>
+<div class="header">
+  <div class="net-title">${(s.net_name || 'Net Log').replace(/</g,'&lt;')}</div>
+  <div class="net-meta">Net Control: <strong>${s.nc_callsign || 'N/A'}</strong>${s.bnc_callsign ? ' &nbsp;&middot;&nbsp; Backup NC: <strong>' + s.bnc_callsign + '</strong>' : ''} &nbsp;&middot;&nbsp; ${s.frequency || ''} MHz ${s.mode || ''} &nbsp;&middot;&nbsp; ${s.net_date || ''}</div>
+  <div class="net-meta">Opened: ${openedStr} &nbsp;&middot;&nbsp; Closed: ${closedStr}${dur ? ' &nbsp;&middot;&nbsp; Duration: ' + dur : ''}</div>
+</div>
+<table>
+  <thead><tr>
+    <th>#</th><th>Callsign</th><th>Name</th><th>Class</th><th>Time</th>
+    <th>USNG (1m)</th><th>what3words</th><th>Logged by</th><th>Notes / Traffic</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer-row">
+  Total check-ins: ${appState.checkins.length} &nbsp;&middot;&nbsp;
+  With USNG: ${appState.checkins.filter(c => c.usng).length} &nbsp;&middot;&nbsp;
+  With traffic: ${appState.checkins.filter(c => c.has_traffic).length} &nbsp;&middot;&nbsp;
+  With comments: ${appState.checkins.filter(c => c.has_comments).length}
+</div>
+<div class="sig-row">
+  <div class="sig-line">Net Control: ${s.nc_callsign || '_____________________'}</div>
+  <div class="sig-line">Backup NC: ${s.bnc_callsign || '_____________________'}</div>
+  <div class="sig-line">Date: ${s.net_date || '_____________________'}</div>
+</div>
+<script>window.onload = function() { window.print(); };<\/script>
+</body></html>`;
+
+  const w = window.open('', '_blank', 'width=1100,height=800');
+  w.document.write(fullHTML);
+  w.document.close();
 }
 
 async function loadUsers() {
