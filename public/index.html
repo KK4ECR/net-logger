@@ -491,6 +491,9 @@ function showApp() {
   document.getElementById('ci-time').value = nowTime();
   document.getElementById('net-start-time').value = nowTime();
   appState.pollTimer = setInterval(pollSession, 5000);
+  // Heartbeat every 30s so status board knows who is online
+  sendHeartbeat();
+  setInterval(sendHeartbeat, 30000);
 }
 
 function applyRoleUI() {
@@ -519,6 +522,10 @@ async function loadCurrentSession() {
       updateStats();
     }
   } catch (e) {}
+}
+
+async function sendHeartbeat() {
+  try { await api('POST', '/heartbeat'); } catch(e) {}
 }
 
 async function checkPendingBadge() {

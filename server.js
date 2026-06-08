@@ -8,6 +8,7 @@ const { db, queries, getFullCheckins } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const activeUsers = new Map(); // userId -> { callsign, role, lastSeen }
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
 const APP_URL = process.env.APP_URL || 'https://your-app.railway.app';
 
@@ -381,6 +382,16 @@ app.put('/api/traffic/:id/passed', requireRole('netcontrol', 'backup'), (req, re
   res.json({ ok: true });
 });
 
+// HEARTBEAT - called by each browser every 30s to register as active
+app.post('/api/heartbeat', requireAuth, (req, res) => {
+  activeUsers.set(req.session.userId, {
+    callsign: req.session.callsign,
+    role: req.session.role,
+    lastSeen: Date.now()
+  });
+  res.json({ ok: true });
+});
+
 // STATUS BOARD - serves the status board page and data
 app.get('/status-board.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'status-board.html'));
@@ -441,6 +452,12 @@ app.get('/api/status-board', requireAuth, (req, res) => {
     };
   });
 
+  // Active users — anyone who sent a heartbeat in the last 90 seconds
+  const now = Date.now();
+  const onlineUsers = Array.from(activeUsers.values())
+    .filter(u => now - u.lastSeen < 90000)
+    .sort((a, b) => a.callsign.localeCompare(b.callsign));
+
   res.json({
     active: true,
     session,
@@ -449,7 +466,8 @@ app.get('/api/status-board', requireAuth, (req, res) => {
     announcements_pending: pendingAnnouncements,
     traffic_counts: trafficCounts,
     pending_traffic: pendingTraffic,
-    opened_at: session.opened_at
+    opened_at: session.opened_at,
+    online_users: onlineUsers
   });
 });
 

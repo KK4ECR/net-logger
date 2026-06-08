@@ -102,6 +102,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .no-session i { font-size: 48px; opacity: 0.3; }
 .no-session p { font-size: 16px; }
 
+/* ONLINE USERS */
+.users-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 20px; margin: 0 20px 20px; }
+.users-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.users-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.user-chip { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface2); }
+.user-chip-call { font-family: monospace; font-weight: 700; font-size: 14px; }
+.user-chip-role { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+.chip-netcontrol { background: rgba(29,158,117,0.2); color: #1D9E75; }
+.chip-backup { background: rgba(59,130,246,0.2); color: #3b82f6; }
+.chip-observer { background: rgba(136,136,132,0.2); color: #888884; }
+.online-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
 /* SCROLLBAR */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface); }
@@ -200,6 +212,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <div class="prec-num-big" id="b-prec-r-pending">0</div>
         <div class="prec-num-sub">pending / <span id="b-prec-r-total">0</span> total</div>
       </div>
+    </div>
+  </div>
+
+  <div class="users-panel">
+    <div class="users-title">
+      <span class="online-dot"></span>
+      Currently logged in
+      <span id="b-user-count" style="font-size:11px;color:var(--muted);font-weight:400"></span>
+    </div>
+    <div class="users-list" id="b-users-list">
+      <span style="font-size:13px;color:var(--muted)">No users detected</span>
     </div>
   </div>
 
@@ -326,6 +349,23 @@ function renderBoard(data) {
   document.getElementById('b-ann-count-badge').textContent = pendingAnn;
   document.getElementById('b-traf-count-badge').textContent = pendingTraffic;
 
+  // Online users
+  const usersList = document.getElementById('b-users-list');
+  const users = data.online_users || [];
+  document.getElementById('b-user-count').textContent = '(' + users.length + ' online)';
+  if (!users.length) {
+    usersList.innerHTML = '<span style="font-size:13px;color:var(--muted)">No users detected</span>';
+  } else {
+    const roleLabel = { netcontrol: 'Net Control', backup: 'Backup NC', observer: 'Observer' };
+    const roleClass = { netcontrol: 'chip-netcontrol', backup: 'chip-backup', observer: 'chip-observer' };
+    usersList.innerHTML = users.map(u => `
+      <div class="user-chip">
+        <span class="online-dot"></span>
+        <span class="user-chip-call">${u.callsign}</span>
+        <span class="user-chip-role ${roleClass[u.role] || 'chip-observer'}">${roleLabel[u.role] || u.role}</span>
+      </div>`).join('');
+  }
+
   // Announcements list
   const annList = document.getElementById('b-ann-list');
   if (!data.announcements_pending.length) {
@@ -397,6 +437,10 @@ async function markPassed(trafficId, btn) {
 startClock();
 fetchStatus();
 pollTimer = setInterval(fetchStatus, 5000);
+// Status board also sends heartbeat so it shows up in the online list
+async function sbHeartbeat() { try { await fetch('/api/heartbeat', { method: 'POST', credentials: 'include' }); } catch(e) {} }
+sbHeartbeat();
+setInterval(sbHeartbeat, 30000);
 </script>
 </body>
 </html>
