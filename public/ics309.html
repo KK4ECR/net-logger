@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ICS 309 Communications Log</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; padding: 16px; }
+@page { size: letter landscape; margin: 1.2cm; }
+@media print { body { padding: 0; } .no-print { display: none !important; } }
+
+.print-bar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.print-btn { padding: 7px 16px; background: #085041; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.print-btn:hover { background: #1D9E75; }
+.dl-btn { padding: 7px 16px; background: #185FA5; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+.period-select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+
+/* ICS 309 FORM HEADER */
+.ics-form { max-width: 100%; }
+.form-title-row { display: flex; align-items: center; justify-content: space-between; border: 2px solid #000; border-bottom: none; padding: 6px 10px; background: #f0f0f0; }
+.form-title { font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.form-number { font-size: 11px; color: #555; }
+
+.header-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; border: 2px solid #000; border-bottom: none; }
+.header-cell { border-right: 1px solid #000; padding: 4px 6px; }
+.header-cell:last-child { border-right: none; }
+.header-cell.span2 { grid-column: span 2; }
+.field-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #555; letter-spacing: 0.05em; display: block; margin-bottom: 2px; }
+.field-value { font-size: 12px; font-weight: 600; min-height: 16px; }
+
+.period-header { display: grid; grid-template-columns: 1fr 1fr 1fr; border: 2px solid #000; border-bottom: none; background: #e8e8e8; }
+.period-cell { border-right: 1px solid #000; padding: 4px 6px; }
+.period-cell:last-child { border-right: none; }
+
+/* LOG TABLE */
+table { width: 100%; border-collapse: collapse; border: 2px solid #000; }
+thead tr { background: #d8d8d8; }
+th { border: 1px solid #555; padding: 5px 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; text-align: left; white-space: nowrap; }
+td { border: 1px solid #bbb; padding: 4px 6px; vertical-align: top; }
+tr:nth-child(even) td { background: #fafafa; }
+.time-col { width: 55px; font-family: monospace; white-space: nowrap; }
+.call-col { width: 80px; font-family: monospace; font-weight: 700; white-space: nowrap; }
+.tact-col { width: 90px; font-size: 10px; }
+.msgnum-col { width: 55px; font-family: monospace; font-size: 10px; }
+.prec-col { width: 70px; }
+.subj-col { min-width: 200px; }
+.passed-col { width: 45px; text-align: center; }
+
+.prec-E { color: #cc0000; font-weight: 700; }
+.prec-P { color: #0044cc; font-weight: 700; }
+.prec-W { color: #996600; font-weight: 700; }
+.prec-R { color: #006600; }
+.checkin-row td { background: #f0f8f0 !important; }
+.resolved-issue td { color: #888; }
+
+/* PERIOD DIVIDER */
+.period-divider { background: #1a1a1a; color: #fff; font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-align: center; padding: 4px; }
+
+/* FOOTER */
+.footer-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; border: 2px solid #000; border-top: none; }
+.footer-cell { border-right: 1px solid #000; padding: 5px 6px; }
+.footer-cell:last-child { border-right: none; }
+
+/* ISSUES TABLE */
+.issues-section { margin-top: 20px; page-break-before: auto; }
+.issues-title { font-size: 13px; font-weight: 700; text-transform: uppercase; border: 2px solid #000; border-bottom: none; padding: 5px 8px; background: #ffe8e8; }
+
+/* SIGNATURE BLOCK */
+.sig-block { margin-top: 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; }
+.sig-line { border-top: 1px solid #000; padding-top: 4px; font-size: 10px; color: #444; }
+
+.loading { text-align: center; padding: 40px; color: #555; font-size: 14px; }
+.error { text-align: center; padding: 40px; color: #cc0000; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="print-bar no-print">
+  <button class="print-btn" onclick="window.print()">&#128438; Print / Save PDF</button>
+  <a id="csv-link" class="dl-btn" href="#">&#8615; Download CSV</a>
+  <select class="period-select" id="period-filter" onchange="renderPeriods()">
+    <option value="all">All periods</option>
+  </select>
+  <span id="period-info" style="font-size:12px;color:#666"></span>
+</div>
+
+<div id="ics-content"><div class="loading">Loading ICS 309...</div></div>
+
+<script>
+const sessionId = window.location.pathname.split('/').pop();
+let allData = null;
+
+async function load() {
+  try {
+    // Fetch session checkins
+    const [checkinRes, issueRes] = await Promise.all([
+      fetch('/api/session/' + sessionId + '/checkins'),
+      fetch('/api/session/' + sessionId + '/issues')
+    ]);
+    if (!checkinRes.ok) throw new Error('Session not found or not authorized');
+    const checkins = await checkinRes.json();
+    const issues = await issueRes.json();
+
+    // Fetch session info from history
+    const histRes = await fetch('/api/session/history-full');
+    const history = await histRes.json();
+    const session = history.find(s => String(s.id) === String(sessionId)) ||
+                    { net_name: 'Unknown', nc_callsign: '', net_date: '' };
+
+    allData = { session, checkins, issues };
+
+    document.getElementById('csv-link').href = '/api/session/' + sessionId + '/ics309.csv';
+
+    buildPeriodFilter();
+    renderPeriods();
+  } catch(e) {
+    document.getElementById('ics-content').innerHTML = '<div class="error">Error: ' + e.message + '</div>';
+  }
+}
+
+function buildPeriodFilter() {
+  const { checkins } = allData;
+  const periods = new Set();
+  checkins.forEach(ci => {
+    const d = ci.time_in ? ci.time_in.split(':')[0] + '00' : null;
+    if (d) periods.add(getDatePeriod(ci));
+  });
+  const sel = document.getElementById('period-filter');
+  [...periods].sort().forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = 'Period: ' + p;
+    sel.appendChild(opt);
+  });
+}
+
+function getDatePeriod(ci) {
+  // Group by calendar date (derived from session date + time)
+  const sess = allData.session;
+  return sess.net_date || 'Unknown Date';
+}
+
+function getPrecedenceClass(p) {
+  if (!p) return '';
+  if (p === 'Emergency') return 'prec-E';
+  if (p === 'Priority') return 'prec-P';
+  if (p === 'Welfare') return 'prec-W';
+  return 'prec-R';
+}
+
+function renderPeriods() {
+  const { session, checkins, issues } = allData;
+  const filter = document.getElementById('period-filter').value;
+
+  // Build log entries
+  const entries = [];
+  checkins.forEach(ci => {
+    entries.push({
+      time: ci.time_in || '',
+      from: ci.callsign,
+      to: session.nc_callsign || 'NCS',
+      tactical: ci.tactical_call || '',
+      msgNum: '',
+      prec: '',
+      subject: 'CHECK-IN' + (ci.name ? ' · ' + ci.name : '') + (ci.has_comments ? ' [' + ci.comment_count + ' announcement(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : '') + ']' : ''),
+      passed: '',
+      type: 'checkin',
+      seq: ci.seq
+    });
+    (ci.traffic || []).forEach(t => {
+      entries.push({
+        time: t.time_sent || ci.time_in || '',
+        from: t.from_callsign || ci.callsign,
+        to: t.deliver_to || '',
+        tactical: ci.tactical_call || '',
+        msgNum: t.msg_number || '',
+        prec: t.precedence || '',
+        subject: t.description || (t.type + ' traffic'),
+        passed: t.passed ? '✓' : '',
+        type: 'traffic',
+        seq: ci.seq
+      });
+    });
+  });
+  entries.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+  const totalCheckins = checkins.length;
+  const totalTraffic = entries.filter(e => e.type === 'traffic').length;
+  const pendingTraffic = entries.filter(e => e.type === 'traffic' && !e.passed).length;
+  const openIssues = issues.filter(i => i.status === 'open').length;
+
+  document.getElementById('period-info').textContent =
+    totalCheckins + ' check-ins · ' + totalTraffic + ' messages · ' + pendingTraffic + ' pending · ' + openIssues + ' open issues';
+
+  const tbody = entries.map(e => `
+    <tr class="${e.type === 'checkin' ? 'checkin-row' : ''}">
+      <td class="time-col">${e.time}</td>
+      <td class="call-col">${e.from}</td>
+      <td class="call-col">${e.to}</td>
+      <td class="tact-col">${e.tactical}</td>
+      <td class="msgnum-col">${e.msgNum}</td>
+      <td class="prec-col"><span class="${getPrecedenceClass(e.prec)}">${e.prec}</span></td>
+      <td class="subj-col">${e.subject}</td>
+      <td class="passed-col" style="color:green;font-weight:700">${e.passed}</td>
+    </tr>`).join('');
+
+  const openedStr = session.opened_at ? new Date(session.opened_at.includes('T') ? session.opened_at : session.opened_at.replace(' ','T')+'Z').toLocaleString() : '';
+  const closedStr = session.closed_at ? new Date(session.closed_at.includes('T') ? session.closed_at : session.closed_at.replace(' ','T')+'Z').toLocaleString() : 'ONGOING';
+
+  const issueRows = issues.length ? `
+    <div class="issues-section no-print-hide">
+      <div class="issues-title">Issues Log (${openIssues} open / ${issues.length} total)</div>
+      <table>
+        <thead><tr>
+          <th style="width:140px">Time</th>
+          <th style="width:70px">Priority</th>
+          <th style="width:70px">Status</th>
+          <th>Description</th>
+          <th style="width:90px">Logged By</th>
+        </tr></thead>
+        <tbody>${issues.map(i => `<tr class="${i.status === 'resolved' ? 'resolved-issue' : ''}">
+          <td>${i.created_at || ''}</td>
+          <td style="text-transform:uppercase;font-weight:700;color:${i.priority==='critical'?'#cc0000':i.priority==='high'?'#cc6600':''}">${i.priority}</td>
+          <td>${i.status}</td>
+          <td>${i.description}</td>
+          <td>${i.created_by_callsign || ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  document.getElementById('ics-content').innerHTML = `
+    <div class="ics-form">
+      <div class="form-title-row">
+        <div class="form-title">ICS 309 &mdash; Communications Log</div>
+        <div class="form-number">ICS 309</div>
+      </div>
+
+      <div class="header-grid">
+        <div class="header-cell">
+          <span class="field-label">1. Incident Name</span>
+          <div class="field-value">${session.incident_name || session.net_name || ''}</div>
+        </div>
+        <div class="header-cell">
+          <span class="field-label">2. Operational Period — Date From</span>
+          <div class="field-value">${openedStr}</div>
+        </div>
+        <div class="header-cell">
+          <span class="field-label">Date / Time To</span>
+          <div class="field-value">${closedStr}</div>
+        </div>
+        <div class="header-cell">
+          <span class="field-label">Activation Type</span>
+          <div class="field-value">${session.activation_type || 'Net'}</div>
+        </div>
+      </div>
+
+      <div class="header-grid">
+        <div class="header-cell">
+          <span class="field-label">3. Radio Operator Name / Net Control</span>
+          <div class="field-value">${session.nc_callsign || ''}</div>
+        </div>
+        <div class="header-cell">
+          <span class="field-label">Backup Net Control</span>
+          <div class="field-value">${session.bnc_callsign || ''}</div>
+        </div>
+        <div class="header-cell">
+          <span class="field-label">4. Frequency / Mode</span>
+          <div class="field-value">${(session.frequency || '') + ' ' + (session.mode || '')}</div>
+        </div>
+        <div class="header-cell">
+          <span class="field-label">5. Total Check-ins</span>
+          <div class="field-value">${totalCheckins}</div>
+        </div>
+      </div>
+
+      <table>
+        <thead><tr>
+          <th class="time-col">Time</th>
+          <th class="call-col">From</th>
+          <th class="call-col">To</th>
+          <th class="tact-col">Tactical Call</th>
+          <th class="msgnum-col">Msg #</th>
+          <th class="prec-col">Precedence</th>
+          <th class="subj-col">Subject / Message</th>
+          <th class="passed-col">✓</th>
+        </tr></thead>
+        <tbody>${tbody}</tbody>
+      </table>
+
+      <div class="footer-grid">
+        <div class="footer-cell">
+          <span class="field-label">Total Check-ins</span>
+          <div class="field-value">${totalCheckins}</div>
+        </div>
+        <div class="footer-cell">
+          <span class="field-label">Total Messages</span>
+          <div class="field-value">${totalTraffic}</div>
+        </div>
+        <div class="footer-cell">
+          <span class="field-label">Pending Traffic</span>
+          <div class="field-value" style="color:${pendingTraffic > 0 ? '#cc0000' : 'inherit'}">${pendingTraffic}</div>
+        </div>
+        <div class="footer-cell">
+          <span class="field-label">Open Issues</span>
+          <div class="field-value" style="color:${openIssues > 0 ? '#cc6600' : 'inherit'}">${openIssues}</div>
+        </div>
+      </div>
+
+      ${issueRows}
+
+      <div class="sig-block">
+        <div class="sig-line">Net Control Signature / Callsign: ${session.nc_callsign || '_____________'}</div>
+        <div class="sig-line">Backup Net Control: ${session.bnc_callsign || '_____________'}</div>
+        <div class="sig-line">Date: ${session.net_date || '_____________'}</div>
+        <div class="sig-line">Prepared by: _____________________</div>
+      </div>
+    </div>
+  `;
+}
+
+load();
+</script>
+</body>
+</html>

@@ -83,9 +83,39 @@ db.exec(`
   );
 `);
 
+// ─── TACTICAL POSITIONS ───────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tactical_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES net_sessions(id),
+    description TEXT NOT NULL,
+    priority TEXT DEFAULT 'normal',
+    status TEXT DEFAULT 'open',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    created_by INTEGER REFERENCES users(id),
+    created_by_callsign TEXT
+  );
+`);
+
 // Migrations - run silently, ignore if column already exists
-// Add announcements_given column if not exists
 try { db.exec('ALTER TABLE checkins ADD COLUMN announcements_given INTEGER DEFAULT 0'); } catch(e) {}
+try { db.exec('ALTER TABLE checkins ADD COLUMN tactical_call TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN msg_number TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN from_callsign TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN description TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN time_sent TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN time_received TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE net_sessions ADD COLUMN incident_name TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE net_sessions ADD COLUMN activation_type TEXT'); } catch(e) {}
 
 ['email', 'full_name'].forEach(col => {
   try { db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`); } catch(e) {}
@@ -135,15 +165,27 @@ const queries = {
   getCheckins: db.prepare('SELECT * FROM checkins WHERE session_id = ? ORDER BY seq ASC'),
   getCheckinById: db.prepare('SELECT * FROM checkins WHERE id = ?'),
   getNextSeq: db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM checkins WHERE session_id = ?'),
-  insertCheckin: db.prepare(`INSERT INTO checkins (session_id, seq, callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, w3w, address, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+  insertCheckin: db.prepare(`INSERT INTO checkins (session_id, seq, callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, w3w, address, tactical_call, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   deleteCheckin: db.prepare('DELETE FROM checkins WHERE id = ? AND session_id = ?'),
   resequenceCheckins: db.prepare('UPDATE checkins SET seq = (SELECT COUNT(*) FROM checkins c2 WHERE c2.session_id = checkins.session_id AND c2.id <= checkins.id) WHERE session_id = ?'),
 
   // Traffic
   getTrafficByCheckin: db.prepare('SELECT * FROM traffic WHERE checkin_id = ? ORDER BY id'),
-  insertTraffic: db.prepare('INSERT INTO traffic (checkin_id, precedence, type, deliver_to, passed) VALUES (?, ?, ?, ?, ?)'),
+  insertTraffic: db.prepare('INSERT INTO traffic (checkin_id, precedence, type, deliver_to, passed, msg_number, from_callsign, description, time_sent, time_received) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   updateTrafficPassed: db.prepare('UPDATE traffic SET passed = ? WHERE id = ?'),
   deleteTrafficByCheckin: db.prepare('DELETE FROM traffic WHERE checkin_id = ?'),
+
+  // Tactical positions
+  getPositions: db.prepare('SELECT * FROM tactical_positions ORDER BY sort_order, name'),
+  insertPosition: db.prepare('INSERT INTO tactical_positions (name, description, sort_order) VALUES (?, ?, ?)'),
+  deletePosition: db.prepare('DELETE FROM tactical_positions WHERE id = ?'),
+
+  // Issues
+  getIssuesBySession: db.prepare("SELECT * FROM issues WHERE session_id = ? ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, created_at DESC"),
+  insertIssue: db.prepare("INSERT INTO issues (session_id, description, priority, created_by, created_by_callsign) VALUES (?, ?, ?, ?, ?)"),
+  resolveIssue: db.prepare("UPDATE issues SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP WHERE id = ?"),
+  deleteIssue: db.prepare("DELETE FROM issues WHERE id = ?"),
+  getOpenIssueCount: db.prepare("SELECT COUNT(*) as cnt FROM issues WHERE session_id = ? AND status = 'open'"),
 };
 
 function getFullCheckins(sessionId) {

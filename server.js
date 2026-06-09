@@ -326,10 +326,13 @@ app.get('/api/session/current', requireAuth, (req, res) => {
 app.post('/api/session/open', requireRole('netcontrol'), (req, res) => {
   const existing = queries.getOpenSession.get();
   if (existing) return res.status(409).json({ error: 'A net session is already open' });
-  const { net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign } = req.body;
+  const { net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, incident_name, activation_type } = req.body;
   if (!net_name) return res.status(400).json({ error: 'Net name required' });
   const result = queries.createSession.run(net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, req.session.userId);
-  res.json({ session: queries.getSessionById.get(result.lastInsertRowid), checkins: [] });
+  const sid = result.lastInsertRowid;
+  if (incident_name) db.prepare('UPDATE net_sessions SET incident_name = ? WHERE id = ?').run(incident_name, sid);
+  if (activation_type) db.prepare('UPDATE net_sessions SET activation_type = ? WHERE id = ?').run(activation_type, sid);
+  res.json({ session: queries.getSessionById.get(sid), checkins: [] });
 });
 
 app.post('/api/session/close', requireRole('netcontrol'), (req, res) => {
@@ -352,17 +355,21 @@ app.post('/api/checkin', requireRole('netcontrol', 'backup'), (req, res) => {
   const session = queries.getOpenSession.get();
   if (!session) return res.status(404).json({ error: 'No open net session' });
   const { callsign, name, license_class, time_in, has_comments, comment_count, comment_notes,
-          has_traffic, lat, lon, usng, w3w, address, traffic } = req.body;
+          has_traffic, lat, lon, usng, w3w, address, tactical_call, traffic } = req.body;
   if (!callsign) return res.status(400).json({ error: 'Callsign required' });
   const { next_seq } = queries.getNextSeq.get(session.id);
   const result = queries.insertCheckin.run(
     session.id, next_seq, callsign.toUpperCase(), name || '', license_class || '',
     time_in || '', has_comments ? 1 : 0, comment_count || 0, comment_notes || '',
     has_traffic ? 1 : 0, lat || null, lon || null, usng || null, w3w || null, address || '',
-    req.session.userId
+    tactical_call || null, req.session.userId
   );
   if (has_traffic && Array.isArray(traffic))
-    traffic.forEach(t => queries.insertTraffic.run(result.lastInsertRowid, t.precedence, t.type, t.to, t.passed ? 1 : 0));
+    traffic.forEach(t => queries.insertTraffic.run(
+      result.lastInsertRowid, t.precedence, t.type, t.to, t.passed ? 1 : 0,
+      t.msg_number || null, t.from_callsign || null, t.description || null,
+      t.time_sent || null, t.time_received || null
+    ));
   const checkin = queries.getCheckinById.get(result.lastInsertRowid);
   checkin.traffic = queries.getTrafficByCheckin.all(result.lastInsertRowid);
   checkin.logged_by_callsign = req.session.callsign;
@@ -458,6 +465,23 @@ app.get('/api/status-board', requireAuth, (req, res) => {
     .filter(u => now - u.lastSeen < 90000)
     .sort((a, b) => a.callsign.localeCompare(b.callsign));
 
+  // Build tactical assignments map (tactical_call → station info)
+  const tacticalAssignments = [];
+  checkins.forEach(ci => {
+    if (ci.tactical_call) {
+      tacticalAssignments.push({
+        tactical_call: ci.tactical_call,
+        callsign: ci.callsign,
+        name: ci.name,
+        time_in: ci.time_in,
+        checkin_id: ci.id
+      });
+    }
+  });
+
+  // Open issues
+  const openIssues = queries.getIssuesBySession.all(session.id).filter(i => i.status === 'open');
+
   res.json({
     active: true,
     session,
@@ -467,7 +491,9 @@ app.get('/api/status-board', requireAuth, (req, res) => {
     traffic_counts: trafficCounts,
     pending_traffic: pendingTraffic,
     opened_at: session.opened_at,
-    online_users: onlineUsers
+    online_users: onlineUsers,
+    tactical_assignments: tacticalAssignments,
+    open_issues: openIssues
   });
 });
 
@@ -479,6 +505,143 @@ app.post('/api/checkin/:id/announcement-given', requireRole('netcontrol', 'backu
     db.prepare('UPDATE checkins SET announcements_given = COALESCE(announcements_given, 0) + 1 WHERE id = ? AND session_id = ?').run(req.params.id, session.id);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── TACTICAL POSITIONS ───────────────────────────────────────────────────────
+app.get('/api/positions', requireAuth, (req, res) => {
+  res.json(queries.getPositions.all());
+});
+
+app.post('/api/positions', requireRole('netcontrol'), (req, res) => {
+  const { name, description, sort_order } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  const result = queries.insertPosition.run(name.trim(), description || null, sort_order || 0);
+  res.json({ id: result.lastInsertRowid, name: name.trim(), description: description || null, sort_order: sort_order || 0 });
+});
+
+app.delete('/api/positions/:id', requireRole('netcontrol'), (req, res) => {
+  queries.deletePosition.run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── ISSUES ───────────────────────────────────────────────────────────────────
+app.get('/api/session/issues', requireAuth, (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.json([]);
+  res.json(queries.getIssuesBySession.all(session.id));
+});
+
+app.get('/api/session/:id/issues', requireAuth, (req, res) => {
+  res.json(queries.getIssuesBySession.all(req.params.id));
+});
+
+app.post('/api/issues', requireRole('netcontrol', 'backup'), (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.status(404).json({ error: 'No open session' });
+  const { description, priority } = req.body;
+  if (!description) return res.status(400).json({ error: 'Description required' });
+  const validPriorities = ['low', 'normal', 'high', 'critical'];
+  const result = queries.insertIssue.run(
+    session.id, description.trim(), validPriorities.includes(priority) ? priority : 'normal',
+    req.session.userId, req.session.callsign
+  );
+  res.json(db.prepare('SELECT * FROM issues WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/issues/:id/resolve', requireRole('netcontrol', 'backup'), (req, res) => {
+  queries.resolveIssue.run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/issues/:id', requireRole('netcontrol'), (req, res) => {
+  queries.deleteIssue.run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── SESSION OPEN WITH INCIDENT INFO ─────────────────────────────────────────
+// (Override to accept incident_name, activation_type)
+// Already handled by existing /api/session/open endpoint - extend via migration
+
+// ─── ICS 309 EXPORT ───────────────────────────────────────────────────────────
+app.get('/api/session/:id/ics309.csv', requireAuth, (req, res) => {
+  const session = queries.getSessionById.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const checkins = getFullCheckins(req.params.id);
+  const issues = queries.getIssuesBySession.all(req.params.id);
+
+  const esc = v => '"' + String(v || '').replace(/"/g, '""') + '"';
+
+  const lines = [];
+  lines.push(['ICS 309 COMMUNICATIONS LOG'].map(esc).join(','));
+  lines.push(['Incident Name', session.incident_name || session.net_name].map(esc).join(','));
+  lines.push(['Activation Type', session.activation_type || 'Net'].map(esc).join(','));
+  lines.push(['Operational Period Start', session.opened_at || ''].map(esc).join(','));
+  lines.push(['Operational Period End', session.closed_at || 'ONGOING'].map(esc).join(','));
+  lines.push(['Net Control', session.nc_callsign || ''].map(esc).join(','));
+  lines.push(['Backup Net Control', session.bnc_callsign || ''].map(esc).join(','));
+  lines.push(['Frequency', (session.frequency || '') + ' ' + (session.mode || '')].map(esc).join(','));
+  lines.push([]);
+  lines.push(['Time', 'From', 'To', 'Subject / Message', 'Tactical Call', 'Msg #', 'Precedence', 'Passed'].map(esc).join(','));
+
+  // Build log entries sorted by time
+  const entries = [];
+  checkins.forEach(ci => {
+    entries.push({
+      time: ci.time_in || '',
+      from: ci.callsign,
+      to: session.nc_callsign || 'NCS',
+      subject: 'CHECK-IN' + (ci.tactical_call ? ' [' + ci.tactical_call + ']' : '') + (ci.name ? ' · ' + ci.name : ''),
+      tactical: ci.tactical_call || '',
+      msgNum: '',
+      prec: '',
+      passed: ''
+    });
+    (ci.traffic || []).forEach(t => {
+      entries.push({
+        time: t.time_sent || ci.time_in || '',
+        from: t.from_callsign || ci.callsign,
+        to: t.deliver_to || '',
+        subject: t.description || (t.type + ' traffic'),
+        tactical: ci.tactical_call || '',
+        msgNum: t.msg_number || '',
+        prec: t.precedence || '',
+        passed: t.passed ? 'YES' : 'NO'
+      });
+    });
+  });
+
+  entries.forEach(e => {
+    lines.push([e.time, e.from, e.to, e.subject, e.tactical, e.msgNum, e.prec, e.passed].map(esc).join(','));
+  });
+
+  if (issues.length) {
+    lines.push([]);
+    lines.push(['ISSUES LOG'].map(esc).join(','));
+    lines.push(['Time', 'Priority', 'Status', 'Description', 'Logged By'].map(esc).join(','));
+    issues.forEach(i => {
+      lines.push([i.created_at, i.priority, i.status, i.description, i.created_by_callsign].map(esc).join(','));
+    });
+  }
+
+  const filename = (session.incident_name || session.net_name || 'net').replace(/\s+/g, '-') + '-ICS309-' + (session.net_date || 'log') + '.csv';
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(lines.join('\n'));
+});
+
+// Printable ICS 309 page
+app.get('/ics309/:id', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'ics309.html'));
+});
+
+// Session history with issues count
+app.get('/api/session/history-full', requireAuth, (req, res) => {
+  const sessions = queries.getRecentSessions.all();
+  const result = sessions.map(s => {
+    const openCount = queries.getOpenIssueCount.get(s.id);
+    return { ...s, open_issues: openCount ? openCount.cnt : 0 };
+  });
+  res.json(result);
 });
 
 app.get('*', (req, res) => {

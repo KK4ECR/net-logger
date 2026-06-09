@@ -100,8 +100,23 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 .toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
 .toggle-row label{font-size:13px;cursor:pointer;}
 .sub-indent{padding-left:22px;margin-bottom:10px;}
-.traffic-item{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:6px;display:grid;grid-template-columns:95px 130px 1fr 100px;gap:8px;align-items:center;}
+.traffic-item{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:6px;}
 .traffic-item select,.traffic-item input{height:28px;font-size:12px;border-radius:var(--radius);border:1px solid var(--border);background:#fff;padding:0 8px;color:var(--text);}
+.traffic-row1{display:grid;grid-template-columns:95px 80px 120px 1fr 120px;gap:8px;align-items:end;margin-bottom:6px;}
+.traffic-row2{display:grid;grid-template-columns:1fr 80px 80px 110px auto;gap:8px;align-items:center;}
+.traffic-field-label{font-size:10px;color:var(--muted);font-weight:500;margin-bottom:2px;}
+.tact-pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--radius);background:#E1F5EE;color:#085041;font-weight:600;font-family:monospace;white-space:nowrap;}
+.issue-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:8px;background:var(--surface);}
+.issue-row.open{border-left:3px solid var(--nc-amber);}
+.issue-row.open.critical{border-left-color:var(--nc-red);}
+.issue-row.resolved{opacity:.55;}
+.issue-desc{flex:1;font-size:13px;}
+.issue-meta{font-size:11px;color:var(--muted);margin-top:2px;}
+.priority-badge{font-size:10px;padding:2px 7px;border-radius:var(--radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em;}
+.priority-normal{background:#F1EFE8;color:#444;}
+.priority-high{background:var(--nc-amber-light);color:var(--nc-amber);}
+.priority-critical{background:var(--nc-red-light);color:var(--nc-red);}
+.priority-low{background:#F1EFE8;color:var(--muted);}
 
 /* LIVE LIST */
 .live-row{display:grid;grid-template-columns:95px 1fr 65px 155px 130px 80px 32px;gap:8px;align-items:center;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:6px;background:var(--surface);}
@@ -244,6 +259,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <div class="nav-item active" onclick="showPage('setup')" id="nav-setup"><i class="ti ti-settings"></i> Setup</div>
       <div class="nav-item" onclick="showPage('checkin')" id="nav-checkin"><i class="ti ti-user-plus"></i> Check-ins</div>
       <div class="nav-item" onclick="showPage('log')" id="nav-log"><i class="ti ti-list"></i> Log</div>
+      <div class="nav-item" onclick="showPage('issues')" id="nav-issues"><i class="ti ti-alert-triangle"></i> Issues <span class="pending-badge" id="issues-badge" style="display:none;background:var(--nc-amber)">0</span></div>
       <div class="nav-item" onclick="showPage('export')" id="nav-export"><i class="ti ti-download"></i> Export</div>
       <div class="nav-item" onclick="showPage('map')" id="nav-map"><i class="ti ti-map-pin"></i> Map</div>
       <div class="nav-section">Admin</div>
@@ -266,6 +282,17 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div class="panel-title"><i class="ti ti-broadcast"></i> Net information</div>
           <div class="form-grid" id="net-form">
             <div class="form-group span2"><label>Net name</label><input type="text" id="net-name" placeholder="e.g. Clay County ARES Net" /></div>
+            <div class="form-group span2"><label>Incident / activation name <span style="color:var(--muted);font-weight:400">(optional — for ICS 309)</span></label><input type="text" id="incident-name" placeholder="e.g. Hurricane Irma Activation 2024" /></div>
+            <div class="form-group"><label>Activation type</label>
+              <select id="activation-type">
+                <option value="">Regular Net</option>
+                <option value="Storm Activation">Storm Activation</option>
+                <option value="Emergency Activation">Emergency Activation</option>
+                <option value="Exercise">Exercise / Drill</option>
+                <option value="Planned Event">Planned Event</option>
+                <option value="Welfare Net">Welfare Net</option>
+              </select>
+            </div>
             <div class="form-group"><label>Net control callsign</label><input type="text" id="nc-call" placeholder="e.g. W4SRX" oninput="this.value=this.value.toUpperCase()" /></div>
             <div class="form-group"><label>Backup net control</label><input type="text" id="bnc-call" placeholder="Optional" oninput="this.value=this.value.toUpperCase()" /></div>
             <div class="form-group"><label>Frequency (MHz)</label><input type="text" id="net-freq" placeholder="146.820" /></div>
@@ -296,6 +323,17 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <div class="form-group"><label>Name (QRZ)</label><input type="text" id="ci-name" placeholder="Auto-fill" readonly style="background:var(--bg)" /></div>
             <div class="form-group"><label>License class</label><input type="text" id="ci-class" placeholder="Auto-fill" readonly style="background:var(--bg)" /></div>
             <div class="form-group"><label>Time in</label><input type="text" id="ci-time" placeholder="HH:MM" /></div>
+          </div>
+          <div style="display:grid;grid-template-columns:220px 1fr;gap:12px;margin-bottom:12px">
+            <div class="form-group">
+              <label>Tactical call / position</label>
+              <input type="text" id="ci-tactical" list="tactical-list" placeholder="e.g. EOC-1, Shelter-Alpha" autocomplete="off" style="font-family:monospace;font-weight:600" />
+              <datalist id="tactical-list"></datalist>
+            </div>
+            <div class="form-group">
+              <label>Location / site</label>
+              <input type="text" id="ci-location" placeholder="e.g. Clay County EOC, Red Cross Shelter" />
+            </div>
           </div>
           <div id="usng-display" class="hidden usng-row">
             <i class="ti ti-map-pin" style="font-size:18px;color:var(--nc-blue)"></i>
@@ -364,17 +402,55 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
         </div>
       </div>
 
+      <!-- ISSUES PAGE -->
+      <div class="page" id="page-issues">
+        <div class="panel" style="border:1.5px dashed var(--border)">
+          <div class="panel-title"><i class="ti ti-alert-triangle"></i> Log new issue</div>
+          <div style="display:grid;grid-template-columns:120px 1fr auto;gap:10px;align-items:end">
+            <div class="form-group">
+              <label>Priority</label>
+              <select id="issue-priority">
+                <option value="normal">Normal</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <input type="text" id="issue-desc" placeholder="Describe the issue or outstanding item..." onkeydown="if(event.key==='Enter')addIssue()" />
+            </div>
+            <button class="btn primary" onclick="addIssue()" style="margin-bottom:14px"><i class="ti ti-plus"></i> Log Issue</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-list"></i> Active issues <span id="open-issues-count" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
+          <div id="issues-list"><div class="empty-state"><i class="ti ti-check"></i>No open issues</div></div>
+        </div>
+      </div>
+
       <!-- EXPORT PAGE -->
       <div class="page" id="page-export">
         <div class="panel">
-          <div class="panel-title"><i class="ti ti-download"></i> Export net log</div>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Exports include all check-ins, USNG coordinates, lat/lon, comments, and traffic.</p>
+          <div class="panel-title"><i class="ti ti-file-certificate"></i> ICS 309 Communications Log</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Official ICS 309 form for the active session — organized by 24-hour period, includes all check-ins, traffic, and issues.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button class="btn primary" onclick="exportCSV()"><i class="ti ti-file-spreadsheet"></i> Export CSV</button>
+            <button class="btn primary" onclick="openICS309()"><i class="ti ti-file-text"></i> View / Print ICS 309</button>
+            <button class="btn" onclick="downloadICS309CSV()"><i class="ti ti-file-spreadsheet"></i> Download ICS 309 CSV</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-download"></i> Raw export (current session)</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Full export including USNG coordinates, what3words, comments, and expanded traffic detail.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" onclick="exportCSV()"><i class="ti ti-file-spreadsheet"></i> Export CSV</button>
             <button class="btn amber" onclick="exportPDF()"><i class="ti ti-file-text"></i> Export PDF</button>
           </div>
         </div>
-
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-history"></i> Session history</div>
+          <div id="session-history-wrap"><div class="empty-state"><i class="ti ti-history"></i>Loading...</div></div>
+        </div>
       </div>
 
       <!-- MAP PAGE -->
@@ -488,9 +564,9 @@ function showApp() {
   document.getElementById('ci-time').value = nowTime();
   document.getElementById('net-start-time').value = nowTime();
   appState.pollTimer = setInterval(pollSession, 5000);
-  // Heartbeat every 30s so status board knows who is online
   sendHeartbeat();
   setInterval(sendHeartbeat, 30000);
+  loadPositions();
 }
 
 function applyRoleUI() {
@@ -546,7 +622,12 @@ async function pollSession() {
       if (mapInitialized && document.getElementById('page-map').classList.contains('active')) renderMap();
       if (appState.user && appState.user.role === 'netcontrol') checkPendingBadge();
       updateCloseButtonState();
-      updateCloseButtonState();
+      // Refresh issues badge silently
+      try {
+        const issues = await api('GET', '/session/issues');
+        updateIssuesBadge(issues);
+        if (document.getElementById('page-issues').classList.contains('active')) renderIssues(issues);
+      } catch(e) {}
     }
   } catch (e) {}
 }
@@ -582,7 +663,9 @@ async function openNet() {
       mode: document.getElementById('net-mode').value, net_date: document.getElementById('net-date').value,
       start_time: document.getElementById('net-start-time').value,
       nc_callsign: document.getElementById('nc-call').value,
-      bnc_callsign: document.getElementById('bnc-call').value
+      bnc_callsign: document.getElementById('bnc-call').value,
+      incident_name: document.getElementById('incident-name').value.trim() || null,
+      activation_type: document.getElementById('activation-type').value || null
     });
     appState.session = data.session;
     appState.checkins = [];
@@ -734,7 +817,21 @@ function addTrafficRow() {
   const id = 'tmsg-' + msgCount;
   const div = document.createElement('div');
   div.className = 'traffic-item'; div.id = id;
-  div.innerHTML = `<select class="msg-prec"><option>Routine</option><option>Priority</option><option>Welfare</option><option>Emergency</option></select><select class="msg-type"><option>Formal</option><option>Informal</option><option>Health & Welfare</option></select><input type="text" class="msg-to" placeholder="Deliver to..." /><div style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="msg-passed" /><label style="font-size:11px;color:var(--muted)">Passed</label><button class="btn sm" onclick="document.getElementById('${id}').remove()" style="padding:0 8px"><i class="ti ti-x"></i></button></div>`;
+  div.innerHTML = `
+    <div class="traffic-row1">
+      <div><div class="traffic-field-label">Precedence</div><select class="msg-prec"><option>Routine</option><option>Priority</option><option>Welfare</option><option>Emergency</option></select></div>
+      <div><div class="traffic-field-label">Msg #</div><input type="text" class="msg-num" placeholder="123" style="width:100%" /></div>
+      <div><div class="traffic-field-label">Type</div><select class="msg-type"><option>Formal</option><option>Informal</option><option>Health &amp; Welfare</option></select></div>
+      <div><div class="traffic-field-label">Description / Subject</div><input type="text" class="msg-desc" placeholder="Brief message description" style="width:100%" /></div>
+      <div><div class="traffic-field-label">From callsign</div><input type="text" class="msg-from" placeholder="Origin" oninput="this.value=this.value.toUpperCase()" style="width:100%;font-family:monospace" /></div>
+    </div>
+    <div class="traffic-row2">
+      <div><div class="traffic-field-label">Deliver to</div><input type="text" class="msg-to" placeholder="Destination callsign or agency" style="width:100%" /></div>
+      <div><div class="traffic-field-label">Time sent</div><input type="text" class="msg-time-sent" placeholder="HH:MM" style="width:100%;font-family:monospace" /></div>
+      <div><div class="traffic-field-label">Time recv'd</div><input type="text" class="msg-time-rcvd" placeholder="HH:MM" style="width:100%;font-family:monospace" /></div>
+      <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="msg-passed" id="passed-${id}" /><label for="passed-${id}" style="font-size:12px;cursor:pointer">Passed</label></div>
+      <div style="padding-top:14px"><button class="btn sm danger" onclick="document.getElementById('${id}').remove()" style="padding:0 8px"><i class="ti ti-x"></i></button></div>
+    </div>`;
   document.getElementById('traffic-list').appendChild(div);
 }
 
@@ -743,7 +840,12 @@ function getTrafficRows() {
     precedence: d.querySelector('.msg-prec').value,
     type: d.querySelector('.msg-type').value,
     to: d.querySelector('.msg-to').value,
-    passed: d.querySelector('.msg-passed').checked
+    passed: d.querySelector('.msg-passed').checked,
+    msg_number: d.querySelector('.msg-num').value.trim(),
+    from_callsign: d.querySelector('.msg-from').value.trim(),
+    description: d.querySelector('.msg-desc').value.trim(),
+    time_sent: d.querySelector('.msg-time-sent').value.trim(),
+    time_received: d.querySelector('.msg-time-rcvd').value.trim()
   }));
 }
 
@@ -767,6 +869,7 @@ async function addCheckin() {
       has_traffic: hasTraffic,
       lat: info.lat || null, lon: info.lon || null, usng: info.usng || null, w3w: info.w3w || null,
       address: [info.addr, info.city, info.state, info.zip].filter(Boolean).join(', '),
+      tactical_call: document.getElementById('ci-tactical').value.trim() || null,
       traffic: hasTraffic ? getTrafficRows() : []
     });
     appState.checkins.push(ci);
@@ -796,6 +899,8 @@ function clearCI() {
   document.getElementById('ci-has-traffic').checked = false;
   document.getElementById('traffic-sub').classList.add('hidden');
   document.getElementById('traffic-list').innerHTML = '';
+  document.getElementById('ci-tactical').value = '';
+  document.getElementById('ci-location').value = '';
   document.getElementById('qrz-hint').textContent = '';
   document.getElementById('usng-display').classList.add('hidden');
   document.getElementById('w3w-display').classList.add('hidden');
@@ -810,12 +915,13 @@ function renderLiveList() {
     const isNew = i === 0;
     const flags = [(ci.has_comments ? `<span class="flag ann">${ci.comment_count} ann.</span>` : ''), ...((ci.traffic || []).map(t => `<span class="flag traf">${t.precedence}</span>`))].filter(Boolean).join('');
     const w3wHtml = ci.w3w ? `<a class="w3w-pill" href="https://what3words.com/${ci.w3w}" target="_blank" rel="noopener" title="${ci.w3w}">///\${ci.w3w}</a>` : '<span style="font-size:11px;color:var(--muted)">No w3w</span>';
+    const tactHtml = ci.tactical_call ? `<span class="tact-pill">${ci.tactical_call}</span>` : '<span style="font-size:11px;color:var(--muted)">—</span>';
     return `<div class="live-row ${isNew ? 'newest' : ''}">
       <div><div class="call-mono">${ci.callsign}</div><div class="seq-label">#${ci.seq}</div></div>
       <div><div class="ci-name-cell">${ci.name || '<span style="color:var(--muted)">Unknown</span>'}</div><div class="ci-class-cell">${ci.license_class || ''}</div></div>
       <div class="ci-time-cell">${ci.time_in}</div>
+      <div>${tactHtml}</div>
       <div>${ci.usng ? `<span class="usng-pill" title="${ci.address || ''}">${ci.usng}</span>` : '<span style="font-size:11px;color:var(--muted)">No coord</span>'}</div>
-      <div>${w3wHtml}</div>
       <div class="flags-cell">${flags}</div>
       <button class="btn sm" onclick="removeCheckin(${ci.id})" aria-label="Remove" ${appState.user.role === 'observer' ? 'disabled' : ''}><i class="ti ti-trash"></i></button>
     </div>`;
@@ -826,18 +932,24 @@ function renderLog() {
   const el = document.getElementById('log-container');
   if (!appState.checkins.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-radio"></i>No check-ins yet</div>'; return; }
   el.innerHTML = `<div class="log-wrap"><table class="log-table">
-    <thead><tr><th>#</th><th>Callsign</th><th>Name</th><th>Class</th><th>Time</th><th>USNG (1m)</th><th>Logged by</th><th>Comments</th><th>Traffic</th></tr></thead>
+    <thead><tr><th>#</th><th>Callsign</th><th>Name</th><th>Class</th><th>Time</th><th>Tactical</th><th>USNG (1m)</th><th>Logged by</th><th>Comments</th><th>Traffic</th></tr></thead>
     <tbody>${appState.checkins.map(ci => `<tr>
       <td style="color:var(--muted)">${ci.seq}</td>
       <td style="font-family:monospace;font-weight:700">${ci.callsign}</td>
       <td>${ci.name || ''}</td>
       <td>${ci.license_class || ''}</td>
       <td style="font-family:monospace">${ci.time_in}</td>
+      <td>${ci.tactical_call ? `<span class="tact-pill">${ci.tactical_call}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
       <td style="font-family:monospace;font-size:11px;color:var(--nc-blue)">${ci.usng || '<span style="color:var(--muted)">—</span>'}</td>
-      <td style="font-size:11px">${ci.w3w ? `<a href="https://what3words.com/${ci.w3w}" target="_blank" rel="noopener" style="color:#E11F26;font-weight:500;text-decoration:none" title="Open in what3words">///\${ci.w3w}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
       <td style="font-size:11px;color:var(--muted)">${ci.logged_by_callsign || ''}</td>
       <td style="font-size:12px">${ci.has_comments ? ci.comment_count + (ci.comment_notes ? ' · ' + ci.comment_notes : '') : ''}</td>
-      <td style="font-size:11px">${(ci.traffic || []).map(t => `<div style="margin-bottom:2px"><span style="font-weight:600;color:${t.precedence === 'Emergency' ? 'var(--nc-red)' : t.precedence === 'Priority' ? 'var(--nc-blue)' : t.precedence === 'Welfare' ? 'var(--nc-amber)' : 'var(--nc-green)'}">${t.precedence}</span> · ${t.type} → ${t.deliver_to}${t.passed ? ' <span style="color:var(--nc-green)">✓</span>' : ''}</div>`).join('')}</td>
+      <td style="font-size:11px">${(ci.traffic || []).map(t => {
+        const precColor = t.precedence === 'Emergency' ? 'var(--nc-red)' : t.precedence === 'Priority' ? 'var(--nc-blue)' : t.precedence === 'Welfare' ? 'var(--nc-amber)' : 'var(--nc-green)';
+        const msgNum = t.msg_number ? `<strong>#${t.msg_number}</strong> ` : '';
+        const fromTo = (t.from_callsign ? t.from_callsign + ' → ' : '') + (t.deliver_to || '');
+        const desc = t.description ? ` · ${t.description}` : '';
+        return `<div style="margin-bottom:3px"><span style="font-weight:600;color:${precColor}">${t.precedence}</span> ${msgNum}${fromTo}${desc}${t.passed ? ' <span style="color:var(--nc-green)">✓</span>' : ' <span style="color:var(--nc-amber)">pending</span>'}</div>`;
+      }).join('')}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -1074,6 +1186,130 @@ function showPage(name) {
   if (name === 'log') { renderLog(); updateStats(); }
   if (name === 'admin') { loadUsers(); loadPendingRequests(); }
   if (name === 'map') { initMap(); renderMap(); }
+  if (name === 'issues') { loadIssues(); }
+  if (name === 'export') { loadSessionHistory(); }
+}
+
+// ─── TACTICAL POSITIONS ───────────────────────────────────────────────────────
+async function loadPositions() {
+  try {
+    const positions = await api('GET', '/positions');
+    const dl = document.getElementById('tactical-list');
+    if (!dl) return;
+    dl.innerHTML = positions.map(p => `<option value="${p.name}">${p.description ? p.name + ' — ' + p.description : p.name}</option>`).join('');
+  } catch(e) {}
+}
+
+// ─── ISSUES ───────────────────────────────────────────────────────────────────
+const PRIORITY_LABELS = { low: 'Low', normal: 'Normal', high: 'High', critical: 'Critical' };
+const PRIORITY_CLASSES = { low: 'priority-low', normal: 'priority-normal', high: 'priority-high', critical: 'priority-critical' };
+
+async function loadIssues() {
+  if (!appState.session) {
+    document.getElementById('issues-list').innerHTML = '<div class="empty-state"><i class="ti ti-broadcast"></i>No active session</div>';
+    return;
+  }
+  try {
+    const issues = await api('GET', '/session/issues');
+    renderIssues(issues);
+    updateIssuesBadge(issues);
+  } catch(e) {}
+}
+
+function renderIssues(issues) {
+  const el = document.getElementById('issues-list');
+  const countEl = document.getElementById('open-issues-count');
+  const open = issues.filter(i => i.status === 'open');
+  const resolved = issues.filter(i => i.status === 'resolved');
+  countEl.textContent = open.length + ' open' + (resolved.length ? ', ' + resolved.length + ' resolved' : '');
+  if (!issues.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-check"></i>No issues logged</div>'; return; }
+  const canEdit = appState.user && appState.user.role !== 'observer';
+  const isNC = appState.user && appState.user.role === 'netcontrol';
+  el.innerHTML = issues.map(iss => `
+    <div class="issue-row ${iss.status} ${iss.priority === 'critical' ? 'critical' : ''}">
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span class="priority-badge ${PRIORITY_CLASSES[iss.priority] || 'priority-normal'}">${PRIORITY_LABELS[iss.priority] || iss.priority}</span>
+          ${iss.status === 'resolved' ? '<span style="font-size:11px;color:var(--nc-green);font-weight:600">RESOLVED</span>' : ''}
+        </div>
+        <div class="issue-desc">${iss.description}</div>
+        <div class="issue-meta">Logged by ${iss.created_by_callsign || 'unknown'} · ${new Date(iss.created_at).toLocaleString()}${iss.resolved_at ? ' · Resolved ' + new Date(iss.resolved_at).toLocaleString() : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        ${iss.status === 'open' && canEdit ? `<button class="btn sm primary" onclick="resolveIssue(${iss.id})"><i class="ti ti-check"></i> Resolve</button>` : ''}
+        ${isNC ? `<button class="btn sm danger" onclick="deleteIssue(${iss.id})"><i class="ti ti-trash"></i></button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function updateIssuesBadge(issues) {
+  const open = issues.filter(i => i.status === 'open').length;
+  const badge = document.getElementById('issues-badge');
+  if (open > 0) { badge.style.display = 'inline-flex'; badge.textContent = open; }
+  else badge.style.display = 'none';
+}
+
+async function addIssue() {
+  const desc = document.getElementById('issue-desc').value.trim();
+  const priority = document.getElementById('issue-priority').value;
+  if (!desc) { alert('Enter an issue description.'); return; }
+  if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
+  try {
+    await api('POST', '/issues', { description: desc, priority });
+    document.getElementById('issue-desc').value = '';
+    document.getElementById('issue-priority').value = 'normal';
+    loadIssues();
+  } catch(e) { alert(e.message); }
+}
+
+async function resolveIssue(id) {
+  try { await api('PUT', '/issues/' + id + '/resolve'); loadIssues(); }
+  catch(e) { alert(e.message); }
+}
+
+async function deleteIssue(id) {
+  if (!confirm('Delete this issue?')) return;
+  try { await api('DELETE', '/issues/' + id); loadIssues(); }
+  catch(e) { alert(e.message); }
+}
+
+// ─── ICS 309 EXPORT ───────────────────────────────────────────────────────────
+function openICS309() {
+  if (!appState.session) { alert('No active session.'); return; }
+  window.open('/ics309/' + appState.session.id, '_blank');
+}
+
+function downloadICS309CSV() {
+  if (!appState.session) { alert('No active session.'); return; }
+  const a = document.createElement('a');
+  a.href = '/api/session/' + appState.session.id + '/ics309.csv';
+  a.download = '';
+  a.click();
+}
+
+// ─── SESSION HISTORY ─────────────────────────────────────────────────────────
+async function loadSessionHistory() {
+  try {
+    const sessions = await api('GET', '/session/history-full');
+    const el = document.getElementById('session-history-wrap');
+    if (!sessions.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-history"></i>No sessions yet</div>'; return; }
+    el.innerHTML = `<div style="overflow-x:auto"><table class="admin-table">
+      <thead><tr><th>Date</th><th>Net / Incident</th><th>Type</th><th>Net Control</th><th>Freq</th><th>Status</th><th>Issues</th><th>Actions</th></tr></thead>
+      <tbody>${sessions.map(s => `<tr>
+        <td style="white-space:nowrap">${s.net_date || ''}</td>
+        <td><div style="font-weight:600">${s.net_name}</div>${s.incident_name ? `<div style="font-size:11px;color:var(--muted)">${s.incident_name}</div>` : ''}</td>
+        <td style="font-size:11px">${s.activation_type || 'Net'}</td>
+        <td style="font-family:monospace;font-weight:600">${s.nc_callsign || ''}</td>
+        <td style="font-size:12px">${s.frequency ? s.frequency + ' ' + (s.mode || '') : ''}</td>
+        <td><span class="status-badge ${s.status}" style="font-size:10px"><span class="sdot"></span>${s.status === 'open' ? 'OPEN' : 'CLOSED'}</span></td>
+        <td>${s.open_issues > 0 ? `<span style="color:var(--nc-amber);font-weight:600">${s.open_issues} open</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap">
+          <a class="btn sm" href="/ics309/${s.id}" target="_blank"><i class="ti ti-file-text"></i> ICS 309</a>
+          <a class="btn sm" href="/api/session/${s.id}/ics309.csv" download><i class="ti ti-file-spreadsheet"></i> CSV</a>
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  } catch(e) {}
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
