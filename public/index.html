@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#085041" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="manifest" href="/manifest.json" />
 <title>Net Logger</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/tabler-icons.min.css" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -174,6 +178,20 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 .w3w-display{display:flex;align-items:center;gap:6px;margin-top:4px;}
 .w3w-display i{font-size:13px;color:#E11F26;}
 
+/* OFFLINE BAR */
+#offline-bar{background:var(--nc-red);color:#fff;padding:7px 1.5rem;font-size:12px;font-weight:600;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+#offline-bar.hidden{display:none!important;}
+.queue-pill{background:rgba(255,255,255,.2);padding:2px 10px;border-radius:12px;font-size:11px;}
+.sync-btn{margin-left:auto;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:var(--radius);padding:4px 12px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:500;}
+.sync-btn:hover{background:rgba(255,255,255,.25);}
+
+/* TOAST NOTIFICATIONS */
+.toast-wrap{position:fixed;bottom:1.5rem;right:1.5rem;z-index:3000;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:340px;}
+.toast{padding:10px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.2);opacity:1;transition:opacity .4s;pointer-events:auto;}
+.toast.green{background:var(--nc-green-dark);}
+.toast.amber{background:var(--nc-amber);}
+.toast.red{background:var(--nc-red);}
+
 @media(max-width:700px){
   .sidebar{display:none;}
   .ci-grid{grid-template-columns:1fr 1fr;}
@@ -324,6 +342,17 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <button class="btn sm" onclick="doLogout()"><i class="ti ti-logout" style="font-size:13px"></i> Sign out</button>
     </div>
   </div>
+  <!-- OFFLINE BAR -->
+  <div id="offline-bar" class="hidden">
+    <i class="ti ti-wifi-off"></i>
+    <span>OFFLINE — check-ins and traffic are saved locally and will sync automatically when you reconnect</span>
+    <span id="queue-pill" class="queue-pill" style="display:none"></span>
+    <button class="sync-btn" onclick="syncOfflineQueue()"><i class="ti ti-refresh"></i> Retry now</button>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div class="toast-wrap" id="toast-wrap"></div>
+
   <div class="main">
     <div class="sidebar">
       <div class="nav-section">Net</div>
@@ -596,10 +625,21 @@ let msgCount = 0;
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
-  const r = await fetch('/api' + path, opts);
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || 'Request failed');
-  return data;
+  try {
+    const r = await fetch('/api' + path, opts);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  } catch(e) {
+    // Network error on a write operation — queue it for later
+    if (['POST','PUT','DELETE'].includes(method) && !navigator.onLine) {
+      queueOperation(method, path, body);
+      const err = new Error('OFFLINE_QUEUED');
+      err.queued = true;
+      throw err;
+    }
+    throw e;
+  }
 }
 
 async function boot() {
@@ -661,6 +701,7 @@ function showApp() {
   sendHeartbeat();
   setInterval(sendHeartbeat, 30000);
   loadPositions();
+  updateOfflineUI();
 }
 
 function applyRoleUI() {
@@ -969,7 +1010,10 @@ async function addCheckin() {
     appState.checkins.push(ci);
     clearCI(); renderLiveList(); renderLog(); updateStats();
     document.getElementById('ci-call').focus();
-  } catch (e) { alert(e.message); }
+  } catch (e) {
+    if (e.queued) { clearCI(); showToast('Check-in queued — will sync when online', 'amber'); document.getElementById('ci-call').focus(); }
+    else alert(e.message);
+  }
 }
 
 async function removeCheckin(id) {
@@ -1361,12 +1405,18 @@ async function addIssue() {
     document.getElementById('issue-desc').value = '';
     document.getElementById('issue-priority').value = 'normal';
     loadIssues();
-  } catch(e) { alert(e.message); }
+  } catch(e) {
+    if (e.queued) { document.getElementById('issue-desc').value = ''; showToast('Issue queued — will sync when online', 'amber'); }
+    else alert(e.message);
+  }
 }
 
 async function resolveIssue(id) {
   try { await api('PUT', '/issues/' + id + '/resolve'); loadIssues(); }
-  catch(e) { alert(e.message); }
+  catch(e) {
+    if (e.queued) showToast('Resolve queued — will sync when online', 'amber');
+    else alert(e.message);
+  }
 }
 
 async function deleteIssue(id) {
@@ -1458,7 +1508,10 @@ async function submitStationTraffic() {
     });
     closeTrafficModal();
     await loadCurrentSession();
-  } catch(e) { alert(e.message); }
+  } catch(e) {
+    if (e.queued) { closeTrafficModal(); showToast('Traffic entry queued — will sync when online', 'amber'); }
+    else alert(e.message);
+  }
 }
 
 // ─── CHECKOUT MODAL ───────────────────────────────────────────────────────────
@@ -1486,7 +1539,10 @@ async function submitCheckout() {
     await api('POST', '/checkin/' + checkoutModalCheckinId + '/checkout', { time_out: timeOut });
     closeCheckoutModal();
     await loadCurrentSession();
-  } catch(e) { alert(e.message); }
+  } catch(e) {
+    if (e.queued) { closeCheckoutModal(); showToast('Checkout queued — will sync when online', 'amber'); }
+    else alert(e.message);
+  }
 }
 
 // ─── POSITION PRESETS ─────────────────────────────────────────────────────────
@@ -1673,7 +1729,94 @@ async function submitRequest() {
   } catch(e) { err.textContent = e.message; }
 }
 
-// MAP
+// ─── OFFLINE QUEUE ────────────────────────────────────────────────────────────
+const QUEUE_KEY = 'netlogger_offline_queue';
+
+function queueOperation(method, path, body) {
+  const queue = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+  queue.push({ method, path, body, ts: Date.now() });
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  updateOfflineUI();
+}
+
+function getQueue() {
+  return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+}
+
+function updateOfflineUI() {
+  const bar = document.getElementById('offline-bar');
+  const pill = document.getElementById('queue-pill');
+  if (!bar) return;
+  const isOffline = !navigator.onLine;
+  bar.classList.toggle('hidden', !isOffline);
+  const q = getQueue();
+  if (q.length > 0) {
+    pill.style.display = 'inline';
+    pill.textContent = q.length + ' queued';
+  } else {
+    pill.style.display = 'none';
+  }
+}
+
+async function syncOfflineQueue() {
+  const queue = getQueue();
+  if (!queue.length) return;
+  if (!navigator.onLine) { showToast('Still offline — will retry automatically', 'red'); return; }
+
+  let synced = 0;
+  const remaining = [];
+
+  for (const op of queue) {
+    try {
+      const opts = { method: op.method, headers: { 'Content-Type': 'application/json' } };
+      if (op.body) opts.body = JSON.stringify(op.body);
+      const r = await fetch('/api' + op.path, opts);
+      if (r.ok) {
+        synced++;
+      } else {
+        // Server rejected it (e.g. session closed) — discard with a note
+        console.warn('Queued op rejected by server:', op.path, r.status);
+      }
+    } catch(e) {
+      // Network failed again — keep everything from here onwards and stop
+      remaining.push(...queue.slice(queue.indexOf(op)));
+      break;
+    }
+  }
+
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+  updateOfflineUI();
+
+  if (synced > 0) {
+    showToast(synced + ' queued item' + (synced > 1 ? 's' : '') + ' synced successfully', 'green');
+    await loadCurrentSession();
+  }
+  if (remaining.length > 0) {
+    showToast(remaining.length + ' item(s) still queued — check your connection', 'red');
+  }
+}
+
+function updateOfflineStatus(isOffline) {
+  const bar = document.getElementById('offline-bar');
+  if (bar) bar.classList.toggle('hidden', !isOffline);
+  updateOfflineUI();
+}
+
+// ─── TOAST ────────────────────────────────────────────────────────────────────
+function showToast(msg, type = 'green', duration = 4000) {
+  const wrap = document.getElementById('toast-wrap');
+  if (!wrap) return;
+  const div = document.createElement('div');
+  div.className = 'toast ' + type;
+  div.textContent = msg;
+  wrap.appendChild(div);
+  setTimeout(() => {
+    div.style.opacity = '0';
+    setTimeout(() => div.remove(), 400);
+  }, duration);
+}
+
+// ─── MAP
 let netMap = null;
 let mapMarkers = [];
 let mapInitialized = false;
@@ -1741,6 +1884,36 @@ function renderMap() {
 
   // Invalidate size in case the tab was hidden when map was initialized
   setTimeout(() => netMap.invalidateSize(), 100);
+}
+
+// ─── ONLINE / OFFLINE LISTENERS ──────────────────────────────────────────────
+window.addEventListener('online', () => {
+  updateOfflineUI();
+  showToast('Back online — syncing queued operations…', 'green');
+  syncOfflineQueue();
+});
+
+window.addEventListener('offline', () => {
+  updateOfflineUI();
+  showToast('You are offline. Changes will be queued and synced when reconnected.', 'amber');
+});
+
+// ─── SERVICE WORKER REGISTRATION ─────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js')
+    .then(reg => {
+      console.log('[SW] Registered', reg.scope);
+      if ('sync' in reg) {
+        reg.sync.register('netlogger-sync').catch(() => {});
+      }
+    })
+    .catch(err => console.warn('[SW] Registration failed:', err));
+
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data && e.data.type === 'SYNC_NOW') {
+      syncOfflineQueue();
+    }
+  });
 }
 
 boot();
