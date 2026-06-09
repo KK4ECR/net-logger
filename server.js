@@ -389,6 +389,31 @@ app.put('/api/traffic/:id/passed', requireRole('netcontrol', 'backup'), (req, re
   res.json({ ok: true });
 });
 
+// Add traffic to an already checked-in station
+app.post('/api/checkin/:id/traffic', requireRole('netcontrol', 'backup'), (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.status(404).json({ error: 'No open session' });
+  const ci = queries.getCheckinById.get(req.params.id);
+  if (!ci || ci.session_id !== session.id) return res.status(404).json({ error: 'Check-in not found' });
+  const { precedence, type, deliver_to, passed, msg_number, from_callsign, description, time_sent, time_received } = req.body;
+  const result = queries.insertTraffic.run(
+    ci.id, precedence || 'Routine', type || 'Formal', deliver_to || '', passed ? 1 : 0,
+    msg_number || null, from_callsign || null, description || null,
+    time_sent || null, time_received || null
+  );
+  db.prepare('UPDATE checkins SET has_traffic = 1 WHERE id = ?').run(ci.id);
+  res.json(db.prepare('SELECT * FROM traffic WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Check out / relieve a station
+app.post('/api/checkin/:id/checkout', requireRole('netcontrol', 'backup'), (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.status(404).json({ error: 'No open session' });
+  const { time_out } = req.body;
+  queries.checkoutCheckin.run(time_out || null, req.params.id);
+  res.json({ ok: true });
+});
+
 // HEARTBEAT - called by each browser every 30s to register as active
 app.post('/api/heartbeat', requireAuth, (req, res) => {
   activeUsers.set(req.session.userId, {
@@ -524,6 +549,43 @@ app.delete('/api/positions/:id', requireRole('netcontrol'), (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── POSITION PRESETS ─────────────────────────────────────────────────────────
+app.get('/api/presets', requireAuth, (req, res) => {
+  res.json(queries.getPresets.all());
+});
+
+app.get('/api/presets/by-type/:type', requireAuth, (req, res) => {
+  res.json(queries.getPresetsByType.all(req.params.type));
+});
+
+app.post('/api/presets', requireRole('netcontrol'), (req, res) => {
+  const { name, event_type, description } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  const result = queries.insertPreset.run(name.trim(), event_type || null, description || null);
+  res.json({ id: result.lastInsertRowid, name: name.trim(), event_type: event_type || null, description: description || null });
+});
+
+app.delete('/api/presets/:id', requireRole('netcontrol'), (req, res) => {
+  queries.deletePreset.run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/presets/:id/positions', requireAuth, (req, res) => {
+  res.json(queries.getPresetPositions.all(req.params.id));
+});
+
+app.post('/api/presets/:id/positions', requireRole('netcontrol'), (req, res) => {
+  const { name, description, sort_order } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  const result = queries.insertPresetPosition.run(req.params.id, name.trim(), description || null, sort_order || 0);
+  res.json({ id: result.lastInsertRowid, preset_id: parseInt(req.params.id), name: name.trim(), description: description || null });
+});
+
+app.delete('/api/presets/:id/positions/:posId', requireRole('netcontrol'), (req, res) => {
+  queries.deletePresetPosition.run(req.params.posId);
+  res.json({ ok: true });
+});
+
 // ─── ISSUES ───────────────────────────────────────────────────────────────────
 app.get('/api/session/issues', requireAuth, (req, res) => {
   const session = queries.getOpenSession.get();
@@ -590,7 +652,7 @@ app.get('/api/session/:id/ics309.csv', requireAuth, (req, res) => {
       time: ci.time_in || '',
       from: ci.callsign,
       to: session.nc_callsign || 'NCS',
-      subject: 'CHECK-IN' + (ci.tactical_call ? ' [' + ci.tactical_call + ']' : '') + (ci.name ? ' · ' + ci.name : ''),
+      subject: 'CHECK-IN' + (ci.tactical_call ? ' [' + ci.tactical_call + ']' : '') + (ci.name ? ' · ' + ci.name : '') + (ci.time_out ? ' → CHECKED OUT ' + ci.time_out : ''),
       tactical: ci.tactical_call || '',
       msgNum: '',
       prec: '',

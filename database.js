@@ -83,7 +83,7 @@ db.exec(`
   );
 `);
 
-// ─── TACTICAL POSITIONS ───────────────────────────────────────────────────────
+// ─── TACTICAL POSITIONS / PRESETS / ISSUES ───────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS tactical_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,6 +91,22 @@ db.exec(`
     description TEXT,
     sort_order INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS position_presets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    event_type TEXT,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS preset_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    preset_id INTEGER NOT NULL REFERENCES position_presets(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    sort_order INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS issues (
@@ -116,6 +132,8 @@ try { db.exec('ALTER TABLE traffic ADD COLUMN time_sent TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE traffic ADD COLUMN time_received TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE net_sessions ADD COLUMN incident_name TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE net_sessions ADD COLUMN activation_type TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE checkins ADD COLUMN time_out TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE checkins ADD COLUMN site_location TEXT'); } catch(e) {}
 
 ['email', 'full_name'].forEach(col => {
   try { db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`); } catch(e) {}
@@ -175,10 +193,22 @@ const queries = {
   updateTrafficPassed: db.prepare('UPDATE traffic SET passed = ? WHERE id = ?'),
   deleteTrafficByCheckin: db.prepare('DELETE FROM traffic WHERE checkin_id = ?'),
 
+  // Checkout
+  checkoutCheckin: db.prepare('UPDATE checkins SET time_out = ? WHERE id = ?'),
+
   // Tactical positions
   getPositions: db.prepare('SELECT * FROM tactical_positions ORDER BY sort_order, name'),
   insertPosition: db.prepare('INSERT INTO tactical_positions (name, description, sort_order) VALUES (?, ?, ?)'),
   deletePosition: db.prepare('DELETE FROM tactical_positions WHERE id = ?'),
+
+  // Position presets
+  getPresets: db.prepare('SELECT * FROM position_presets ORDER BY name'),
+  getPresetsByType: db.prepare('SELECT * FROM position_presets WHERE event_type = ? ORDER BY name'),
+  insertPreset: db.prepare('INSERT INTO position_presets (name, event_type, description) VALUES (?, ?, ?)'),
+  deletePreset: db.prepare('DELETE FROM position_presets WHERE id = ?'),
+  getPresetPositions: db.prepare('SELECT * FROM preset_positions WHERE preset_id = ? ORDER BY sort_order, name'),
+  insertPresetPosition: db.prepare('INSERT INTO preset_positions (preset_id, name, description, sort_order) VALUES (?, ?, ?, ?)'),
+  deletePresetPosition: db.prepare('DELETE FROM preset_positions WHERE id = ?'),
 
   // Issues
   getIssuesBySession: db.prepare("SELECT * FROM issues WHERE session_id = ? ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, created_at DESC"),

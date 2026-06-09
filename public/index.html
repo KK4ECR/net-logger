@@ -118,8 +118,18 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 .priority-critical{background:var(--nc-red-light);color:var(--nc-red);}
 .priority-low{background:#F1EFE8;color:var(--muted);}
 
+/* MODALS */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem;}
+.modal-card{background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);width:100%;max-width:600px;box-shadow:0 12px 40px rgba(0,0,0,.25);}
+.modal-header{padding:.875rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;}
+.modal-body{padding:1.25rem;}
+.modal-footer{padding:.75rem 1.25rem;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
+
 /* LIVE LIST */
-.live-row{display:grid;grid-template-columns:95px 1fr 65px 155px 130px 80px 32px;gap:8px;align-items:center;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:6px;background:var(--surface);}
+.live-row{display:grid;grid-template-columns:95px 1fr 65px 155px 130px 80px auto;gap:8px;align-items:center;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:6px;background:var(--surface);}
+.live-row.checked-out{opacity:.65;background:#f8f8f6;}
+.time-out-tag{font-size:10px;color:var(--nc-red);font-family:monospace;display:block;}
 .live-row.newest{border-color:var(--nc-green);border-width:1.5px;}
 .call-mono{font-family:monospace;font-weight:700;font-size:13px;letter-spacing:.03em;}
 .seq-label{font-size:10px;color:var(--muted);}
@@ -236,6 +246,67 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
   </div>
 </div>
 
+<!-- TRAFFIC MODAL -->
+<div id="traffic-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeTrafficModal()">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title"><i class="ti ti-mail-forward"></i> Log traffic for <span id="tmod-callsign" style="font-family:monospace;color:var(--nc-green-dark)"></span></div>
+      <button class="btn sm" onclick="closeTrafficModal()"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:95px 80px 1fr;gap:10px;margin-bottom:10px">
+        <div class="form-group" style="margin:0"><label>Time</label><input type="text" id="tmod-time" placeholder="HH:MM" style="font-family:monospace" /></div>
+        <div class="form-group" style="margin:0"><label>Precedence</label>
+          <select id="tmod-prec"><option>Routine</option><option>Priority</option><option>Welfare</option><option>Emergency</option></select>
+        </div>
+        <div class="form-group" style="margin:0"><label>Msg #</label><input type="text" id="tmod-msgnum" placeholder="e.g. 001" /></div>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:10px;margin-bottom:10px">
+        <div class="form-group" style="margin:0"><label>Type</label>
+          <select id="tmod-type"><option>Formal</option><option>Informal</option><option>Health &amp; Welfare</option><option>Shelter Report</option></select>
+        </div>
+        <div class="form-group" style="margin:0"><label>Description / Subject</label><input type="text" id="tmod-desc" placeholder="Brief message description or subject" /></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 80px 80px;gap:10px;margin-bottom:4px">
+        <div class="form-group" style="margin:0"><label>From callsign</label><input type="text" id="tmod-from" placeholder="Origin station" oninput="this.value=this.value.toUpperCase()" style="font-family:monospace" /></div>
+        <div class="form-group" style="margin:0"><label>Deliver to</label><input type="text" id="tmod-to" placeholder="Destination callsign or agency" /></div>
+        <div class="form-group" style="margin:0"><label>Time sent</label><input type="text" id="tmod-sent" placeholder="HH:MM" style="font-family:monospace" /></div>
+        <div class="form-group" style="margin:0"><label>Time recv'd</label><input type="text" id="tmod-rcvd" placeholder="HH:MM" style="font-family:monospace" /></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+        <input type="checkbox" id="tmod-passed" />
+        <label for="tmod-passed" style="font-size:13px;cursor:pointer">Already passed</label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeTrafficModal()">Cancel</button>
+      <button class="btn primary" onclick="submitStationTraffic()"><i class="ti ti-check"></i> Log traffic</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHECKOUT MODAL -->
+<div id="checkout-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeCheckoutModal()">
+  <div class="modal-card" style="max-width:380px">
+    <div class="modal-header">
+      <div class="modal-title"><i class="ti ti-door-exit"></i> Check out station</div>
+      <button class="btn sm" onclick="closeCheckoutModal()"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Log the departure time for <strong id="comod-callsign" style="font-family:monospace"></strong>. The record stays in the log for ICS 309 accountability.</p>
+      <div class="form-group">
+        <label>Time out</label>
+        <input type="text" id="comod-time" placeholder="HH:MM" style="font-family:monospace;max-width:120px" />
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:8px">To bring in a replacement, check in the new operator and assign the same tactical position after confirming the checkout.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeCheckoutModal()">Cancel</button>
+      <button class="btn amber" onclick="submitCheckout()"><i class="ti ti-door-exit"></i> Confirm checkout</button>
+    </div>
+  </div>
+</div>
+
 <!-- APP -->
 <div id="app-screen" class="app-wrap hidden">
   <div class="topbar">
@@ -283,8 +354,9 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div class="form-grid" id="net-form">
             <div class="form-group span2"><label>Net name</label><input type="text" id="net-name" placeholder="e.g. Clay County ARES Net" /></div>
             <div class="form-group span2"><label>Incident / activation name <span style="color:var(--muted);font-weight:400">(optional — for ICS 309)</span></label><input type="text" id="incident-name" placeholder="e.g. Hurricane Irma Activation 2024" /></div>
-            <div class="form-group"><label>Activation type</label>
-              <select id="activation-type">
+            <div class="form-group">
+              <label>Activation type</label>
+              <select id="activation-type" onchange="checkPresetForType(this.value)">
                 <option value="">Regular Net</option>
                 <option value="Storm Activation">Storm Activation</option>
                 <option value="Emergency Activation">Emergency Activation</option>
@@ -292,6 +364,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
                 <option value="Planned Event">Planned Event</option>
                 <option value="Welfare Net">Welfare Net</option>
               </select>
+              <div id="preset-suggest" style="margin-top:6px;display:none"></div>
             </div>
             <div class="form-group"><label>Net control callsign</label><input type="text" id="nc-call" placeholder="e.g. W4SRX" oninput="this.value=this.value.toUpperCase()" /></div>
             <div class="form-group"><label>Backup net control</label><input type="text" id="bnc-call" placeholder="Optional" oninput="this.value=this.value.toUpperCase()" /></div>
@@ -487,6 +560,27 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
         <div class="panel">
           <div class="panel-title"><i class="ti ti-users"></i> User accounts</div>
           <div id="user-table-wrap"><div class="empty-state"><i class="ti ti-users"></i>Loading...</div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-layout-list"></i> Tactical position presets</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Save named sets of tactical positions for each activation type. When you open a net, you can load the matching preset to pre-populate the tactical call dropdown.</p>
+          <div style="display:grid;grid-template-columns:1fr 160px 1fr auto;gap:8px;align-items:end;margin-bottom:1rem">
+            <div class="form-group" style="margin:0"><label>Preset name</label><input type="text" id="new-preset-name" placeholder="e.g. Storm Activation Positions" /></div>
+            <div class="form-group" style="margin:0"><label>Activation type</label>
+              <select id="new-preset-type">
+                <option value="">Any / General</option>
+                <option value="Storm Activation">Storm Activation</option>
+                <option value="Emergency Activation">Emergency Activation</option>
+                <option value="Exercise">Exercise / Drill</option>
+                <option value="Planned Event">Planned Event</option>
+                <option value="Welfare Net">Welfare Net</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0"><label>Description (optional)</label><input type="text" id="new-preset-desc" placeholder="Brief description" /></div>
+            <button class="btn primary" onclick="createPreset()" style="margin-bottom:14px"><i class="ti ti-plus"></i> Add preset</button>
+          </div>
+          <div id="presets-wrap"><div class="empty-state"><i class="ti ti-layout-list"></i>No presets yet</div></div>
         </div>
       </div>
 
@@ -909,21 +1003,29 @@ function clearCI() {
 
 function renderLiveList() {
   const el = document.getElementById('live-list');
-  const recent = appState.checkins.slice().reverse().slice(0, 10);
+  const recent = appState.checkins.slice().reverse().slice(0, 15);
   if (!recent.length) { el.innerHTML = ''; return; }
+  const canEdit = appState.user && appState.user.role !== 'observer';
   el.innerHTML = recent.map((ci, i) => {
-    const isNew = i === 0;
+    const isNew = i === 0 && !ci.time_out;
+    const isOut = !!ci.time_out;
     const flags = [(ci.has_comments ? `<span class="flag ann">${ci.comment_count} ann.</span>` : ''), ...((ci.traffic || []).map(t => `<span class="flag traf">${t.precedence}</span>`))].filter(Boolean).join('');
-    const w3wHtml = ci.w3w ? `<a class="w3w-pill" href="https://what3words.com/${ci.w3w}" target="_blank" rel="noopener" title="${ci.w3w}">///\${ci.w3w}</a>` : '<span style="font-size:11px;color:var(--muted)">No w3w</span>';
     const tactHtml = ci.tactical_call ? `<span class="tact-pill">${ci.tactical_call}</span>` : '<span style="font-size:11px;color:var(--muted)">—</span>';
-    return `<div class="live-row ${isNew ? 'newest' : ''}">
+    const timeHtml = isOut
+      ? `<div class="ci-time-cell">${ci.time_in}</div><span class="time-out-tag">OUT ${ci.time_out}</span>`
+      : `<div class="ci-time-cell">${ci.time_in}</div>`;
+    return `<div class="live-row ${isNew ? 'newest' : ''} ${isOut ? 'checked-out' : ''}">
       <div><div class="call-mono">${ci.callsign}</div><div class="seq-label">#${ci.seq}</div></div>
       <div><div class="ci-name-cell">${ci.name || '<span style="color:var(--muted)">Unknown</span>'}</div><div class="ci-class-cell">${ci.license_class || ''}</div></div>
-      <div class="ci-time-cell">${ci.time_in}</div>
+      <div>${timeHtml}</div>
       <div>${tactHtml}</div>
       <div>${ci.usng ? `<span class="usng-pill" title="${ci.address || ''}">${ci.usng}</span>` : '<span style="font-size:11px;color:var(--muted)">No coord</span>'}</div>
       <div class="flags-cell">${flags}</div>
-      <button class="btn sm" onclick="removeCheckin(${ci.id})" aria-label="Remove" ${appState.user.role === 'observer' ? 'disabled' : ''}><i class="ti ti-trash"></i></button>
+      <div style="display:flex;gap:3px">
+        <button class="btn sm" onclick="openTrafficModal(${ci.id},'${ci.callsign}')" title="Log traffic for this station" ${canEdit ? '' : 'disabled'}><i class="ti ti-mail-forward"></i></button>
+        ${!isOut ? `<button class="btn sm amber" onclick="openCheckoutModal(${ci.id},'${ci.callsign}')" title="Check out / relieve station" ${canEdit ? '' : 'disabled'}><i class="ti ti-door-exit"></i></button>` : `<button class="btn sm" onclick="openCheckoutModal(${ci.id},'${ci.callsign}')" title="Edit checkout time" ${canEdit ? '' : 'disabled'}><i class="ti ti-clock"></i></button>`}
+        <button class="btn sm danger" onclick="removeCheckin(${ci.id})" title="Remove check-in" ${canEdit ? '' : 'disabled'}><i class="ti ti-trash"></i></button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1184,7 +1286,7 @@ function showPage(name) {
   document.getElementById('page-' + name).classList.add('active');
   document.getElementById('nav-' + name).classList.add('active');
   if (name === 'log') { renderLog(); updateStats(); }
-  if (name === 'admin') { loadUsers(); loadPendingRequests(); }
+  if (name === 'admin') { loadUsers(); loadPendingRequests(); loadPresets(); }
   if (name === 'map') { initMap(); renderMap(); }
   if (name === 'issues') { loadIssues(); }
   if (name === 'export') { loadSessionHistory(); }
@@ -1310,6 +1412,214 @@ async function loadSessionHistory() {
       </tr>`).join('')}</tbody>
     </table></div>`;
   } catch(e) {}
+}
+
+// ─── TRAFFIC MODAL ────────────────────────────────────────────────────────────
+let trafficModalCheckinId = null;
+
+function openTrafficModal(checkinId, callsign) {
+  if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
+  trafficModalCheckinId = checkinId;
+  document.getElementById('tmod-callsign').textContent = callsign;
+  document.getElementById('tmod-time').value = nowTime();
+  document.getElementById('tmod-prec').value = 'Routine';
+  document.getElementById('tmod-msgnum').value = '';
+  document.getElementById('tmod-type').value = 'Formal';
+  document.getElementById('tmod-desc').value = '';
+  document.getElementById('tmod-from').value = callsign;
+  document.getElementById('tmod-to').value = '';
+  document.getElementById('tmod-sent').value = nowTime();
+  document.getElementById('tmod-rcvd').value = '';
+  document.getElementById('tmod-passed').checked = false;
+  document.getElementById('traffic-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('tmod-desc').focus(), 50);
+}
+
+function closeTrafficModal() {
+  document.getElementById('traffic-modal').classList.add('hidden');
+  trafficModalCheckinId = null;
+}
+
+async function submitStationTraffic() {
+  if (!trafficModalCheckinId) return;
+  const desc = document.getElementById('tmod-desc').value.trim();
+  if (!desc) { alert('Enter a message description.'); return; }
+  try {
+    await api('POST', '/checkin/' + trafficModalCheckinId + '/traffic', {
+      precedence: document.getElementById('tmod-prec').value,
+      type: document.getElementById('tmod-type').value,
+      deliver_to: document.getElementById('tmod-to').value.trim(),
+      passed: document.getElementById('tmod-passed').checked,
+      msg_number: document.getElementById('tmod-msgnum').value.trim(),
+      from_callsign: document.getElementById('tmod-from').value.trim(),
+      description: desc,
+      time_sent: document.getElementById('tmod-sent').value.trim(),
+      time_received: document.getElementById('tmod-rcvd').value.trim()
+    });
+    closeTrafficModal();
+    await loadCurrentSession();
+  } catch(e) { alert(e.message); }
+}
+
+// ─── CHECKOUT MODAL ───────────────────────────────────────────────────────────
+let checkoutModalCheckinId = null;
+
+function openCheckoutModal(checkinId, callsign) {
+  checkoutModalCheckinId = checkinId;
+  document.getElementById('comod-callsign').textContent = callsign;
+  const ci = appState.checkins.find(c => c.id === checkinId);
+  document.getElementById('comod-time').value = (ci && ci.time_out) ? ci.time_out : nowTime();
+  document.getElementById('checkout-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('comod-time').focus(), 50);
+}
+
+function closeCheckoutModal() {
+  document.getElementById('checkout-modal').classList.add('hidden');
+  checkoutModalCheckinId = null;
+}
+
+async function submitCheckout() {
+  if (!checkoutModalCheckinId) return;
+  const timeOut = document.getElementById('comod-time').value.trim();
+  if (!timeOut) { alert('Enter a checkout time.'); return; }
+  try {
+    await api('POST', '/checkin/' + checkoutModalCheckinId + '/checkout', { time_out: timeOut });
+    closeCheckoutModal();
+    await loadCurrentSession();
+  } catch(e) { alert(e.message); }
+}
+
+// ─── POSITION PRESETS ─────────────────────────────────────────────────────────
+async function checkPresetForType(type) {
+  const suggestEl = document.getElementById('preset-suggest');
+  if (!type) { suggestEl.style.display = 'none'; return; }
+  try {
+    const presets = await api('GET', '/presets/by-type/' + encodeURIComponent(type));
+    if (!presets.length) { suggestEl.style.display = 'none'; return; }
+    suggestEl.style.display = 'block';
+    suggestEl.innerHTML = presets.map(p =>
+      `<button class="btn sm" onclick="applyPreset(${p.id},'${p.name.replace(/'/g,'\\\'')}')" style="margin-right:6px;margin-bottom:4px"><i class="ti ti-download"></i> Load "${p.name}"</button>`
+    ).join('');
+  } catch(e) { suggestEl.style.display = 'none'; }
+}
+
+async function applyPreset(presetId, presetName) {
+  try {
+    const positions = await api('GET', '/presets/' + presetId + '/positions');
+    if (!positions.length) { alert('That preset has no positions yet.'); return; }
+    const dl = document.getElementById('tactical-list');
+    if (dl) {
+      // Replace tactical datalist with preset positions
+      dl.innerHTML = positions.map(p => `<option value="${p.name}">${p.description ? p.name + ' — ' + p.description : p.name}</option>`).join('');
+    }
+    document.getElementById('preset-suggest').innerHTML = `<span style="font-size:12px;color:var(--nc-green-dark)">✓ Loaded ${positions.length} positions from "${presetName}"</span>`;
+    setTimeout(() => { document.getElementById('preset-suggest').style.display='none'; }, 3000);
+  } catch(e) { alert(e.message); }
+}
+
+async function loadPresets() {
+  try {
+    const presets = await api('GET', '/presets');
+    renderPresets(presets);
+  } catch(e) {}
+}
+
+async function renderPresets(presets) {
+  const el = document.getElementById('presets-wrap');
+  if (!el) return;
+  if (!presets.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-layout-list"></i>No presets yet — add one above</div>'; return; }
+
+  // Group by event type
+  const grouped = {};
+  presets.forEach(p => {
+    const key = p.event_type || 'General';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(p);
+  });
+
+  let html = '';
+  for (const [type, list] of Object.entries(grouped)) {
+    html += `<div style="margin-bottom:1rem">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">${type}</div>`;
+    for (const p of list) {
+      html += `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;background:var(--bg)" id="preset-${p.id}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div>
+            <strong style="font-size:13px">${p.name}</strong>
+            ${p.description ? `<span style="font-size:12px;color:var(--muted);margin-left:8px">${p.description}</span>` : ''}
+          </div>
+          <button class="btn sm danger" onclick="deletePreset(${p.id},'${p.name.replace(/'/g,'\\\'')}')" title="Delete preset"><i class="ti ti-trash"></i></button>
+        </div>
+        <div id="preset-pos-${p.id}" style="margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="new-pos-name-${p.id}" placeholder="Position name (e.g. Shelter-Alpha)" style="height:28px;font-size:12px;border-radius:var(--radius);border:1px solid var(--border);padding:0 8px;flex:1" />
+          <input type="text" id="new-pos-desc-${p.id}" placeholder="Description (optional)" style="height:28px;font-size:12px;border-radius:var(--radius);border:1px solid var(--border);padding:0 8px;flex:1" />
+          <button class="btn sm primary" onclick="addPresetPosition(${p.id})"><i class="ti ti-plus"></i> Add</button>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
+
+  // Load positions for each preset
+  for (const p of presets) {
+    loadPresetPositions(p.id);
+  }
+}
+
+async function loadPresetPositions(presetId) {
+  try {
+    const positions = await api('GET', '/presets/' + presetId + '/positions');
+    const el = document.getElementById('preset-pos-' + presetId);
+    if (!el) return;
+    if (!positions.length) { el.innerHTML = '<span style="font-size:12px;color:var(--muted)">No positions yet</span>'; return; }
+    el.innerHTML = positions.map(p =>
+      `<span style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:3px 8px;margin:2px;font-size:12px">
+        <span class="tact-pill" style="font-size:11px">${p.name}</span>
+        ${p.description ? `<span style="color:var(--muted)">${p.description}</span>` : ''}
+        <button onclick="deletePresetPosition(${presetId},${p.id})" style="background:none;border:none;cursor:pointer;color:var(--muted);padding:0;line-height:1;font-size:13px" title="Remove">×</button>
+      </span>`
+    ).join('');
+  } catch(e) {}
+}
+
+async function createPreset() {
+  const name = document.getElementById('new-preset-name').value.trim();
+  if (!name) { alert('Enter a preset name.'); return; }
+  const event_type = document.getElementById('new-preset-type').value;
+  const description = document.getElementById('new-preset-desc').value.trim();
+  try {
+    await api('POST', '/presets', { name, event_type: event_type || null, description: description || null });
+    document.getElementById('new-preset-name').value = '';
+    document.getElementById('new-preset-desc').value = '';
+    loadPresets();
+  } catch(e) { alert(e.message); }
+}
+
+async function deletePreset(id, name) {
+  if (!confirm('Delete preset "' + name + '" and all its positions?')) return;
+  try { await api('DELETE', '/presets/' + id); loadPresets(); }
+  catch(e) { alert(e.message); }
+}
+
+async function addPresetPosition(presetId) {
+  const nameEl = document.getElementById('new-pos-name-' + presetId);
+  const descEl = document.getElementById('new-pos-desc-' + presetId);
+  const name = nameEl.value.trim();
+  if (!name) { alert('Enter a position name.'); return; }
+  try {
+    await api('POST', '/presets/' + presetId + '/positions', { name, description: descEl.value.trim() || null });
+    nameEl.value = ''; descEl.value = '';
+    loadPresetPositions(presetId);
+  } catch(e) { alert(e.message); }
+}
+
+async function deletePresetPosition(presetId, posId) {
+  try {
+    await api('DELETE', '/presets/' + presetId + '/positions/' + posId);
+    loadPresetPositions(presetId);
+  } catch(e) { alert(e.message); }
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
