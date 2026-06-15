@@ -112,6 +112,12 @@ db.exec(`
 try { db.exec('ALTER TABLE checkins ADD COLUMN w3w TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE checkins ADD COLUMN announcements_given INTEGER DEFAULT 0'); } catch(e) {}
 
+// Issues table column migrations - required for databases created before these columns were added
+try { db.exec('ALTER TABLE issues ADD COLUMN created_by INTEGER'); } catch(e) {}
+try { db.exec('ALTER TABLE issues ADD COLUMN resolved_by INTEGER'); } catch(e) {}
+try { db.exec('ALTER TABLE issues ADD COLUMN resolved_at DATETIME'); } catch(e) {}
+try { db.exec('ALTER TABLE issues ADD COLUMN priority TEXT DEFAULT \'normal\''); } catch(e) {}
+
 function bootstrapAdmin() {
   const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('netcontrol');
   if (!existing) {
