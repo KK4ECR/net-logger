@@ -605,13 +605,13 @@ app.post('/api/issues', requireRole('netcontrol', 'backup'), (req, res) => {
   const validPriorities = ['low', 'normal', 'high', 'critical'];
   const result = queries.insertIssue.run(
     session.id, description.trim(), validPriorities.includes(priority) ? priority : 'normal',
-    req.session.userId, req.session.callsign
+    req.session.userId
   );
   res.json(db.prepare('SELECT * FROM issues WHERE id = ?').get(result.lastInsertRowid));
 });
 
 app.put('/api/issues/:id/resolve', requireRole('netcontrol', 'backup'), (req, res) => {
-  queries.resolveIssue.run(req.params.id);
+  queries.resolveIssue.run('resolved', req.session.userId, req.params.id);
   res.json({ ok: true });
 });
 

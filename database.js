@@ -83,6 +83,18 @@ db.exec(`
     passed INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES net_sessions(id),
+    description TEXT NOT NULL,
+    priority TEXT DEFAULT 'normal',
+    status TEXT DEFAULT 'open',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    created_by INTEGER REFERENCES users(id),
+    resolved_by INTEGER REFERENCES users(id)
+  );
+
   CREATE TABLE IF NOT EXISTS preambles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT UNIQUE NOT NULL,
@@ -379,6 +391,12 @@ const queries = {
   getTrafficByCheckin: db.prepare('SELECT * FROM traffic WHERE checkin_id = ? ORDER BY id'),
   insertTraffic: db.prepare('INSERT INTO traffic (checkin_id, precedence, type, deliver_to, passed) VALUES (?, ?, ?, ?, ?)'),
   updateTrafficPassed: db.prepare('UPDATE traffic SET passed = ? WHERE id = ?'),
+
+  getIssuesBySession: db.prepare('SELECT * FROM issues WHERE session_id = ? ORDER BY created_at DESC'),
+  insertIssue: db.prepare('INSERT INTO issues (session_id, description, priority, created_by) VALUES (?, ?, ?, ?)'),
+  resolveIssue: db.prepare('UPDATE issues SET status = ?, resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?'),
+  deleteIssue: db.prepare('DELETE FROM issues WHERE id = ?'),
+  countOpenIssues: db.prepare("SELECT COUNT(*) as cnt FROM issues WHERE session_id = ? AND status = 'open'"),
 
   getAllPreambles: db.prepare('SELECT * FROM preambles ORDER BY id'),
   getPreambleByType: db.prepare('SELECT * FROM preambles WHERE type = ?'),
