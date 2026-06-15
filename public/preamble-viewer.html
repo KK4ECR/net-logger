@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Net Preamble</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f4f0;color:#1a1a18;min-height:100vh;}
+.toolbar{background:#085041;color:#fff;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:10;flex-wrap:wrap;}
+.toolbar-left{display:flex;align-items:center;gap:10px;}
+.toolbar-title{font-size:15px;font-weight:600;}
+.toolbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.btn{height:32px;padding:0 14px;border-radius:6px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;transition:background .1s;}
+.btn:hover{background:rgba(255,255,255,.25);}
+.btn.amber{background:#BA7517;border-color:#8a5510;}
+.btn.amber:hover{background:#8a5510;}
+.timer-display{font-family:monospace;font-size:22px;font-weight:700;color:#a8ddc9;min-width:70px;text-align:center;}
+.timer-running{color:#4ade80;}
+
+.content{max-width:820px;margin:0 auto;padding:28px 28px 60px;}
+.preamble-body{background:#fff;border-radius:10px;border:1px solid #e2e2de;padding:36px 40px;line-height:1.8;font-size:15px;}
+
+/* Markdown styles */
+.preamble-body h1{font-size:24px;font-weight:700;color:#085041;border-bottom:2.5px solid #1D9E75;padding-bottom:8px;margin-bottom:20px;}
+.preamble-body h2{font-size:18px;font-weight:700;color:#1a1a18;margin:28px 0 10px;padding-left:8px;border-left:3px solid #1D9E75;}
+.preamble-body h3{font-size:16px;font-weight:600;color:#1a1a18;margin:20px 0 8px;}
+.preamble-body p{margin-bottom:12px;color:#1a1a18;}
+.preamble-body strong{font-weight:700;color:#1a1a18;}
+.preamble-body em{font-style:italic;color:#6b6b68;}
+.preamble-body ul,.preamble-body ol{margin:8px 0 12px 24px;}
+.preamble-body li{margin-bottom:4px;}
+.preamble-body hr{border:none;border-top:1px solid #e2e2de;margin:20px 0;}
+.preamble-body blockquote{border-left:3px solid #1D9E75;padding-left:14px;color:#555;margin:12px 0;}
+.preamble-body code{background:#f0f0ec;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:13px;}
+.preamble-body pre{background:#f0f0ec;padding:14px;border-radius:8px;overflow-x:auto;margin-bottom:12px;}
+.preamble-body pre code{background:none;padding:0;}
+.preamble-body table{width:100%;border-collapse:collapse;margin-bottom:14px;}
+.preamble-body th{background:#085041;color:#fff;padding:7px 10px;text-align:left;font-size:13px;}
+.preamble-body td{padding:7px 10px;border-bottom:1px solid #e2e2de;font-size:13px;}
+.preamble-body tr:nth-child(even) td{background:#f8f8f6;}
+
+.meta-bar{background:#E1F5EE;border:1px solid #1D9E75;border-radius:8px;padding:10px 16px;margin-bottom:20px;font-size:13px;color:#085041;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+.meta-updated{font-size:11px;color:#6b6b68;}
+
+@media print{
+  .toolbar{display:none!important;}
+  body{background:#fff;}
+  .content{padding:0;}
+  .preamble-body{border:none;padding:0;box-shadow:none;}
+  .meta-bar{display:none;}
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="toolbar-left">
+    <span style="font-size:20px">📻</span>
+    <span class="toolbar-title" id="tb-title">Net Preamble</span>
+  </div>
+  <div class="toolbar-right">
+    <span class="timer-display" id="timer-display">00:00</span>
+    <button class="btn" id="btn-start" onclick="startTimer()">▶ Start</button>
+    <button class="btn" id="btn-pause" onclick="pauseTimer()" style="display:none">⏸ Pause</button>
+    <button class="btn" id="btn-reset" onclick="resetTimer()">↺ Reset</button>
+    <button class="btn amber" onclick="window.print()">🖨 Print</button>
+    <button class="btn" onclick="window.close()">✕ Close</button>
+  </div>
+</div>
+
+<div class="content">
+  <div class="meta-bar" id="meta-bar">
+    <span id="meta-type"></span>
+    <span class="meta-updated" id="meta-updated"></span>
+  </div>
+  <div class="preamble-body" id="preamble-body">
+    <p style="color:#6b6b68">Loading preamble...</p>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const type = params.get('type') || 'regular';
+
+const typeLabels = {
+  regular: 'Regular Weekly Net',
+  emergency: 'Emergency Net',
+  skywarn: 'Skywarn Net',
+  event: 'Event Net'
+};
+
+async function loadPreamble() {
+  try {
+    const r = await fetch('/api/preambles/' + encodeURIComponent(type), { credentials: 'include' });
+    if (r.status === 401) { window.location.href = '/'; return; }
+    if (!r.ok) { document.getElementById('preamble-body').innerHTML = '<p style="color:#A32D2D">Could not load preamble.</p>'; return; }
+    const data = await r.json();
+    document.title = data.title + ' — Preamble';
+    document.getElementById('tb-title').textContent = data.title;
+    document.getElementById('meta-type').textContent = typeLabels[type] || type;
+    document.getElementById('meta-updated').textContent = data.updated_at
+      ? 'Last updated: ' + new Date(data.updated_at.includes('T') ? data.updated_at : data.updated_at.replace(' ','T')+'Z').toLocaleDateString()
+      : '';
+    document.getElementById('preamble-body').innerHTML = marked.parse(data.content || '');
+  } catch(e) {
+    document.getElementById('preamble-body').innerHTML = '<p style="color:#A32D2D">Error loading preamble: ' + e.message + '</p>';
+  }
+}
+
+// Timer
+let timerInterval = null;
+let timerSeconds = 0;
+let timerRunning = false;
+
+function formatTimer(s) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+}
+
+function startTimer() {
+  if (timerRunning) return;
+  timerRunning = true;
+  document.getElementById('btn-start').style.display = 'none';
+  document.getElementById('btn-pause').style.display = 'inline-flex';
+  document.getElementById('timer-display').classList.add('timer-running');
+  timerInterval = setInterval(() => {
+    timerSeconds++;
+    document.getElementById('timer-display').textContent = formatTimer(timerSeconds);
+  }, 1000);
+}
+
+function pauseTimer() {
+  timerRunning = false;
+  clearInterval(timerInterval);
+  document.getElementById('btn-start').style.display = 'inline-flex';
+  document.getElementById('btn-pause').style.display = 'none';
+  document.getElementById('timer-display').classList.remove('timer-running');
+}
+
+function resetTimer() {
+  pauseTimer();
+  timerSeconds = 0;
+  document.getElementById('timer-display').textContent = '00:00';
+}
+
+loadPreamble();
+</script>
+</body>
+</html>

@@ -706,6 +706,34 @@ app.get('/api/session/history-full', requireAuth, (req, res) => {
   res.json(result);
 });
 
+// PREAMBLES
+app.get('/preamble-viewer.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'preamble-viewer.html'));
+});
+
+app.get('/api/preambles', requireAuth, (req, res) => {
+  res.json(queries.getAllPreambles.all());
+});
+
+app.get('/api/preambles/:type', requireAuth, (req, res) => {
+  const p = queries.getPreambleByType.get(req.params.type);
+  if (!p) return res.status(404).json({ error: 'Preamble not found' });
+  res.json(p);
+});
+
+app.put('/api/preambles/:type', requireAuth, (req, res) => {
+  // Only KK4ECR can edit preambles
+  if (req.session.callsign !== 'KK4ECR') {
+    return res.status(403).json({ error: 'Only KK4ECR can edit preambles' });
+  }
+  const { title, content } = req.body;
+  if (!title || !content) return res.status(400).json({ error: 'Title and content required' });
+  const existing = queries.getPreambleByType.get(req.params.type);
+  if (!existing) return res.status(404).json({ error: 'Preamble not found' });
+  queries.updatePreamble.run(title, content, req.session.callsign, req.params.type);
+  res.json({ ok: true });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

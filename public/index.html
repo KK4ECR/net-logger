@@ -362,6 +362,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <div class="nav-item" onclick="showPage('issues')" id="nav-issues"><i class="ti ti-alert-triangle"></i> Issues <span class="pending-badge" id="issues-badge" style="display:none;background:var(--nc-amber)">0</span></div>
       <div class="nav-item" onclick="showPage('export')" id="nav-export"><i class="ti ti-download"></i> Export</div>
       <div class="nav-item" onclick="showPage('map')" id="nav-map"><i class="ti ti-map-pin"></i> Map</div>
+      <div class="nav-item" onclick="showPage('preambles')" id="nav-preambles"><i class="ti ti-file-text"></i> Preambles</div>
       <div class="nav-section">Admin</div>
       <div class="nav-item" onclick="showPage('admin')" id="nav-admin"><i class="ti ti-users"></i> Users <span class="pending-badge" id="pending-badge" style="display:none">0</span></div>
     </div>
@@ -562,6 +563,31 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <span>No active session</span>
         </div>
         <div id="map"></div>
+      </div>
+
+      <!-- PREAMBLES PAGE -->
+      <div class="page" id="page-preambles">
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-file-text"></i> Net Preambles</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Open any preamble in a new window for reading during the net. Includes a timer, print button, and formatted display.</p>
+          <div id="preambles-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+        </div>
+        <div class="panel hidden" id="preamble-editor-panel" style="border:1.5px solid var(--nc-green)">
+          <div class="panel-title" style="color:var(--nc-green)"><i class="ti ti-edit"></i> Edit Preamble</div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Title</label>
+            <input type="text" id="pe-title" placeholder="Preamble title" style="max-width:500px"/>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Content (Markdown)</label>
+            <textarea id="pe-content" rows="20" style="width:100%;border-radius:var(--radius);border:1px solid var(--border);background:var(--color-background-secondary);color:var(--color-text-primary);padding:10px;font-family:var(--font-mono);font-size:12px;line-height:1.6;resize:vertical"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn primary" onclick="savePreamble()"><i class="ti ti-check"></i> Save preamble</button>
+            <button class="btn" onclick="cancelEditPreamble()"><i class="ti ti-x"></i> Cancel</button>
+            <span id="pe-status" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+        </div>
       </div>
 
       <!-- ADMIN PAGE -->
@@ -1676,6 +1702,71 @@ async function deletePresetPosition(presetId, posId) {
     await api('DELETE', '/presets/' + presetId + '/positions/' + posId);
     loadPresetPositions(presetId);
   } catch(e) { alert(e.message); }
+}
+
+// PREAMBLES
+let currentEditType = null;
+
+async function loadPreambles() {
+  try {
+    const preambles = await api('GET', '/preambles');
+    const el = document.getElementById('preambles-list');
+    const isAdmin = appState.user && appState.user.callsign === 'KK4ECR';
+    const icons = { regular: 'ti-radio', emergency: 'ti-alert-triangle', skywarn: 'ti-cloud-storm', event: 'ti-calendar-event' };
+    const colors = { regular: 'var(--nc-green)', emergency: 'var(--nc-red)', skywarn: 'var(--nc-blue)', event: 'var(--nc-amber)' };
+    const bgs = { regular: 'var(--nc-green-light)', emergency: 'var(--nc-red-light)', skywarn: 'var(--nc-blue-light)', event: 'var(--nc-amber-light)' };
+    el.innerHTML = preambles.map(p => `
+      <div style="background:var(--color-background-primary);border:1px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1.1rem;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:36px;height:36px;border-radius:var(--border-radius-md);background:${bgs[p.type]||'var(--nc-green-light)'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <i class="ti ${icons[p.type]||'ti-file-text'}" style="font-size:18px;color:${colors[p.type]||'var(--nc-green)'}"></i>
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:14px">${p.title}</div>
+            <div style="font-size:11px;color:var(--color-text-secondary)">${p.updated_at ? 'Updated ' + new Date(p.updated_at.includes('T')?p.updated_at:p.updated_at.replace(' ','T')+'Z').toLocaleDateString() : ''}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <a href="/preamble-viewer.html?type=${p.type}" target="_blank" rel="noopener" class="btn primary" style="font-size:12px;text-decoration:none;height:30px">
+            <i class="ti ti-external-link" style="font-size:12px"></i> Open
+          </a>
+          ${isAdmin ? `<button class="btn" onclick="editPreamble('${p.type}')" style="font-size:12px;height:30px"><i class="ti ti-edit" style="font-size:12px"></i> Edit</button>` : ''}
+        </div>
+      </div>`).join('');
+  } catch(e) { console.error('Load preambles error:', e); }
+}
+
+async function editPreamble(type) {
+  try {
+    const p = await api('GET', '/preambles/' + type);
+    currentEditType = type;
+    document.getElementById('pe-title').value = p.title;
+    document.getElementById('pe-content').value = p.content;
+    document.getElementById('pe-status').textContent = '';
+    document.getElementById('preamble-editor-panel').classList.remove('hidden');
+    document.getElementById('preamble-editor-panel').scrollIntoView({ behavior: 'smooth' });
+  } catch(e) { alert(e.message); }
+}
+
+async function savePreamble() {
+  const title = document.getElementById('pe-title').value.trim();
+  const content = document.getElementById('pe-content').value;
+  const status = document.getElementById('pe-status');
+  if (!title || !content) { status.textContent = 'Title and content are required.'; status.style.color = 'var(--nc-red)'; return; }
+  try {
+    await api('PUT', '/preambles/' + currentEditType, { title, content });
+    status.textContent = '✓ Saved';
+    status.style.color = 'var(--nc-green)';
+    setTimeout(() => {
+      document.getElementById('preamble-editor-panel').classList.add('hidden');
+      loadPreambles();
+    }, 1000);
+  } catch(e) { status.textContent = e.message; status.style.color = 'var(--nc-red)'; }
+}
+
+function cancelEditPreamble() {
+  document.getElementById('preamble-editor-panel').classList.add('hidden');
+  currentEditType = null;
 }
 
 function nowTime() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
