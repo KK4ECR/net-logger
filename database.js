@@ -95,6 +95,29 @@ db.exec(`
     resolved_by INTEGER REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS tactical_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS presets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    event_type TEXT,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS preset_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    preset_id INTEGER NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    sort_order INTEGER DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS preambles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT UNIQUE NOT NULL,
@@ -111,6 +134,15 @@ db.exec(`
 });
 try { db.exec('ALTER TABLE checkins ADD COLUMN w3w TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE checkins ADD COLUMN announcements_given INTEGER DEFAULT 0'); } catch(e) {}
+
+// Checkins column migrations
+try { db.exec('ALTER TABLE checkins ADD COLUMN tactical_call TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE checkins ADD COLUMN time_out TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE checkins ADD COLUMN location TEXT'); } catch(e) {}
+
+// Net sessions column migrations
+try { db.exec('ALTER TABLE net_sessions ADD COLUMN incident_name TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE net_sessions ADD COLUMN activation_type TEXT'); } catch(e) {}
 
 // Issues table column migrations - required for databases created before these columns were added
 try { db.exec('ALTER TABLE issues ADD COLUMN created_by INTEGER'); } catch(e) {}
@@ -390,7 +422,7 @@ const queries = {
   getCheckins: db.prepare('SELECT * FROM checkins WHERE session_id = ? ORDER BY seq ASC'),
   getCheckinById: db.prepare('SELECT * FROM checkins WHERE id = ?'),
   getNextSeq: db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM checkins WHERE session_id = ?'),
-  insertCheckin: db.prepare(`INSERT INTO checkins (session_id, seq, callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, w3w, address, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+  insertCheckin: db.prepare(`INSERT INTO checkins (session_id, seq, callsign, name, license_class, time_in, has_comments, comment_count, comment_notes, has_traffic, lat, lon, usng, w3w, address, tactical_call, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   deleteCheckin: db.prepare('DELETE FROM checkins WHERE id = ? AND session_id = ?'),
   resequenceCheckins: db.prepare('UPDATE checkins SET seq = (SELECT COUNT(*) FROM checkins c2 WHERE c2.session_id = checkins.session_id AND c2.id <= checkins.id) WHERE session_id = ?'),
 
@@ -403,6 +435,22 @@ const queries = {
   resolveIssue: db.prepare('UPDATE issues SET status = ?, resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?'),
   deleteIssue: db.prepare('DELETE FROM issues WHERE id = ?'),
   countOpenIssues: db.prepare("SELECT COUNT(*) as cnt FROM issues WHERE session_id = ? AND status = 'open'"),
+
+  checkoutCheckin: db.prepare('UPDATE checkins SET time_out = ? WHERE id = ?'),
+  getOpenIssueCount: db.prepare("SELECT COUNT(*) as cnt FROM issues WHERE session_id = ? AND status = 'open'"),
+
+  getPositions: db.prepare('SELECT * FROM tactical_positions ORDER BY name'),
+  insertPosition: db.prepare('INSERT INTO tactical_positions (name, description) VALUES (?, ?)'),
+  deletePosition: db.prepare('DELETE FROM tactical_positions WHERE id = ?'),
+
+  getPresets: db.prepare('SELECT * FROM presets ORDER BY name'),
+  getPresetsByType: db.prepare('SELECT * FROM presets WHERE event_type = ? ORDER BY name'),
+  insertPreset: db.prepare('INSERT INTO presets (name, event_type, description) VALUES (?, ?, ?)'),
+  deletePreset: db.prepare('DELETE FROM presets WHERE id = ?'),
+
+  getPresetPositions: db.prepare('SELECT * FROM preset_positions WHERE preset_id = ? ORDER BY sort_order, name'),
+  insertPresetPosition: db.prepare('INSERT INTO preset_positions (preset_id, name, description, sort_order) VALUES (?, ?, ?, ?)'),
+  deletePresetPosition: db.prepare('DELETE FROM preset_positions WHERE id = ?'),
 
   getAllPreambles: db.prepare('SELECT * FROM preambles ORDER BY id'),
   getPreambleByType: db.prepare('SELECT * FROM preambles WHERE type = ?'),
