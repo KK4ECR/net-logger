@@ -652,4 +652,4 @@ const schedQueries = {
   markReminderSent: db.prepare('UPDATE schedule_signups SET reminder_24h_sent = ?, reminder_1h_sent = ? WHERE id = ?'),
 };
 
-module.exports = { db, queries, schedQueries, resetQueries, settingsQueries, renderTokenQueries, getFullCheckins };
+module.exports = { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins };

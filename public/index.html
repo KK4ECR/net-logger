@@ -532,7 +532,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn amber" onclick="exportPDF()" style="font-size:12px"><i class="ti ti-file-text"></i> View Standard PDF</button>
             <button class="btn primary" onclick="openICS309()" style="font-size:12px"><i class="ti ti-file-certificate"></i> View ICS 309</button>
-            <button class="btn" onclick="emailReportToAdmins('standard', this)" style="font-size:12px"><i class="ti ti-mail"></i> Email Standard PDF</button>
+            <button class="btn" onclick="emailReportToAdmins('standard', this)" style="font-size:12px"><i class="ti ti-mail"></i> Email Standard Report</button>
             <button class="btn" onclick="emailReportToAdmins('ics309', this)" style="font-size:12px"><i class="ti ti-mail"></i> Email ICS 309</button>
             <button class="btn sm" onclick="document.getElementById('post-close-banner').style.display='none'" title="Dismiss"><i class="ti ti-x"></i></button>
           </div>
@@ -996,7 +996,7 @@ function updateEmailReportButtons() {
 
 async function emailReportToAdmins(format, btnEl) {
   if (!appState.session) { alert('No session to report on.'); return; }
-  const formatLabel = format === 'ics309' ? 'ICS 309' : 'standard PDF';
+  const formatLabel = format === 'ics309' ? 'ICS 309' : 'standard';
   if (!confirm('Email the ' + formatLabel + ' report for "' + (appState.session.net_name || 'this net') + '" to all admins?')) return;
   // Works whether called from the Export tab buttons (fixed IDs) or the Log tab banner
   // (passed directly via event.currentTarget in the onclick attribute)

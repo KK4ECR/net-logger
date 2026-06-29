@@ -4,8 +4,7 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
-const { db, queries, schedQueries, resetQueries, settingsQueries, renderTokenQueries, getFullCheckins } = require('./database');
-const puppeteer = require('puppeteer');
+const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,49 +26,16 @@ app.use(session({
   cookie: { maxAge: 8 * 60 * 60 * 1000 }
 }));
 
-// Checks for a valid, unexpired, single-use render token (?renderToken=...) and, if present,
-// resolves it to a real user without touching the session store - used so Puppeteer can load
-// authenticated pages server-side (e.g. /ics309/:id) to generate PDFs for email.
-// Tokens are consumed (marked used) the first time the *page* is requested, not on every
-// subsequent API call the page makes, so the page's own client-side fetches still work.
-function tryRenderToken(req) {
-  const token = req.query.renderToken;
-  if (!token) return null;
-  const row = renderTokenQueries.getByToken.get(token);
-  if (!row || row.used || new Date(row.expires_at) < new Date()) return null;
-  const user = queries.getUserById.get(row.user_id);
-  if (!user) return null;
-  return { row, user };
-}
-
 function requireAuth(req, res, next) {
-  if (req.session.userId) return next();
-  const resolved = tryRenderToken(req);
-  if (resolved) {
-    req.session.userId = resolved.user.id;
-    req.session.callsign = resolved.user.callsign;
-    req.session.role = resolved.user.role;
-    if (!resolved.row.used) renderTokenQueries.markUsed.run(resolved.row.id);
-    return next();
-  }
-  return res.status(401).json({ error: 'Not authenticated' });
+  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+  next();
 }
 
 function requireRole(...roles) {
   return (req, res, next) => {
-    if (req.session.userId) {
-      if (!roles.includes(req.session.role)) return res.status(403).json({ error: 'Insufficient permissions' });
-      return next();
-    }
-    const resolved = tryRenderToken(req);
-    if (resolved && roles.includes(resolved.user.role)) {
-      req.session.userId = resolved.user.id;
-      req.session.callsign = resolved.user.callsign;
-      req.session.role = resolved.user.role;
-      if (!resolved.row.used) renderTokenQueries.markUsed.run(resolved.row.id);
-      return next();
-    }
-    return res.status(401).json({ error: 'Not authenticated' });
+    if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+    if (!roles.includes(req.session.role)) return res.status(403).json({ error: 'Insufficient permissions' });
+    next();
   };
 }
 
@@ -1220,53 +1186,14 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ─── PUPPETEER PDF GENERATION ───────────────────────────────────────────────────
-let browserInstance = null;
-async function getBrowser() {
-  if (browserInstance && browserInstance.isConnected()) return browserInstance;
-  const launchOptions = {
-    headless: 'new',
-    args: [
-      '--no-sandbox', '--disable-setuid-sandbox',
-      // --disable-dev-shm-usage forces Chromium to use disk instead of /dev/shm for
-      // shared memory, which is small/restricted in most containers and a very common
-      // cause of silent render failures (produces a short, invalid PDF buffer).
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      // NOTE: deliberately NOT using --single-process. It removes Chromium's normal
-      // process isolation, which makes OOM kills and crashes harder to detect cleanly
-      // and was producing truncated/invalid PDF buffers instead of a clear error.
-      '--no-zygote',
-      '--disable-background-networking',
-      '--disable-extensions',
-      '--js-flags=--max-old-space-size=256' // cap Chromium's own JS heap, conserve container memory
-    ],
-    // Generous timeout - slow first launch (cold container) shouldn't be mistaken for a crash
-    timeout: 60000
-  };
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-  console.log('Launching Puppeteer with executablePath:', launchOptions.executablePath || '(Puppeteer default)');
-  try {
-    browserInstance = await puppeteer.launch(launchOptions);
-    browserInstance.on('disconnected', () => {
-      console.error('Puppeteer browser disconnected unexpectedly (likely crashed or was OOM-killed)');
-      browserInstance = null;
-    });
-  } catch(e) {
-    console.error('Puppeteer launch failed:', e.message);
-    throw new Error('PDF generation is unavailable right now (browser engine failed to start): ' + e.message);
-  }
-  return browserInstance;
-}
-
+// ─── REPORT HTML GENERATION (no Puppeteer/Chromium - plain HTML, emailed directly) ────
 function parseUTCServer(dtStr) {
   if (!dtStr) return null;
   return new Date(dtStr.includes('T') || dtStr.endsWith('Z') ? dtStr : dtStr.replace(' ', 'T') + 'Z');
 }
 
-// Builds the same HTML/layout as the browser-side "Export PDF" button, from server-side data
+// Builds the same layout as the browser-side "Export PDF" button, from server-side data.
+// Returned HTML is used directly as both the email body and the attached .html file.
 function buildStandardReportHTML(session, checkins) {
   const dur = session.opened_at && session.closed_at
     ? Math.round((parseUTCServer(session.closed_at) - parseUTCServer(session.opened_at)) / 60000) + ' min' : '';
@@ -1276,7 +1203,7 @@ function buildStandardReportHTML(session, checkins) {
   const rows = checkins.map((ci, i) => {
     const notes = [];
     if (ci.has_comments) notes.push(ci.comment_count + ' comment(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : ''));
-    (ci.traffic || []).forEach(t => notes.push('[' + t.precedence + '] ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' (passed)' : '')));
+    (ci.traffic || []).forEach(t => notes.push('[' + t.precedence + '] ' + t.type + ' \u2192 ' + t.deliver_to + (t.passed ? ' (passed)' : '')));
     return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
       <td style="padding:5px 7px;color:#999;white-space:nowrap">${ci.seq}</td>
       <td style="padding:5px 7px;font-weight:700;font-family:monospace;white-space:nowrap">${ci.callsign}</td>
@@ -1336,135 +1263,180 @@ function buildStandardReportHTML(session, checkins) {
 </body></html>`;
 }
 
-function assertValidPDF(buffer, context) {
-  if (!buffer || buffer.length < 100 || buffer.toString('utf8', 0, 5) !== '%PDF-') {
-    throw new Error('PDF generation produced invalid output (' + context + ', ' + (buffer ? buffer.length : 0) + ' bytes). The browser engine may have failed to render the page correctly.');
-  }
-  console.log('PDF generated OK:', context, '-', buffer.length, 'bytes, header:', buffer.toString('utf8', 0, 8));
-}
+// Builds the same ICS 309 layout as /ics309/:id (public/ics309.html), directly from
+// server-side data - no browser navigation, no auth tokens, no Chromium needed.
+function buildICS309HTML(session, checkins, issues) {
+  const getPrecClass = p => p === 'Emergency' ? 'prec-E' : p === 'Priority' ? 'prec-P' : p === 'Welfare' ? 'prec-W' : 'prec-R';
 
-async function renderHTMLToPDFBuffer(html, options = {}, attempt = 1) {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  let pageCrashed = null;
-  page.on('error', err => { pageCrashed = err; console.error('Page crashed during standard report render:', err.message); });
-  try {
-    // 'load' is more appropriate than 'networkidle0' for static setContent() HTML with
-    // no external resources - networkidle0 can resolve before layout/paint fully settles,
-    // which has been observed to produce truncated PDF output from page.pdf().
-    await page.setContent(html, { waitUntil: 'load', timeout: 30000 });
-    if (pageCrashed) throw new Error('Page crashed before PDF could be generated: ' + pageCrashed.message);
-    // Give Chromium's layout/paint pipeline a brief moment to fully settle before printing
-    await new Promise(r => setTimeout(r, 300));
-    const buffer = await page.pdf({
-      format: 'Letter',
-      landscape: options.landscape !== false,
-      printBackground: true,
-      margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
+  const entries = [];
+  checkins.forEach(ci => {
+    entries.push({
+      time: ci.time_in || '', from: ci.callsign, to: session.nc_callsign || 'NCS',
+      tactical: ci.tactical_call || '', msgNum: '', prec: '',
+      subject: 'CHECK-IN' + (ci.name ? ' \u00b7 ' + ci.name : '') + (ci.has_comments ? ' [' + ci.comment_count + ' announcement(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : '') + ']' : ''),
+      passed: '', type: 'checkin'
     });
-    if (pageCrashed) throw new Error('Page crashed during PDF generation: ' + pageCrashed.message);
-    assertValidPDF(buffer, 'standard report');
-    return buffer;
-  } catch(e) {
-    // page.pdf() can occasionally return truncated/invalid output with no thrown error
-    // and no crash event (a known category of Puppeteer/Chromium issue). Retry once with
-    // a fresh page before giving up, rather than failing the whole report on a fluke.
-    if (attempt < 2) {
-      console.warn('renderHTMLToPDFBuffer attempt ' + attempt + ' failed (' + e.message + '), retrying...');
-      await page.close().catch(() => {});
-      return renderHTMLToPDFBuffer(html, options, attempt + 1);
-    }
-    throw e;
-  } finally {
-    await page.close().catch(() => {});
-  }
-}
-
-// Renders a full app page (e.g. /ics309/:id) to PDF by authenticating Puppeteer with a
-// short-lived, single-use render token instead of trying to share session cookies.
-async function renderAppPageToPDFBuffer(pathAndQuery, userId, attempt = 1) {
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString(); // 2 minutes
-  renderTokenQueries.create.run(userId, token, expiresAt);
-
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  let pageCrashed = null;
-  page.on('error', err => { pageCrashed = err; console.error('Page crashed during ICS 309 render:', err.message); });
-  try {
-    const separator = pathAndQuery.includes('?') ? '&' : '?';
-    const url = 'http://127.0.0.1:' + PORT + pathAndQuery + separator + 'renderToken=' + token;
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
-    if (pageCrashed) throw new Error('Page crashed before PDF could be generated: ' + pageCrashed.message);
-    // Give client-side fetch()/render logic a brief moment to finish painting tables
-    await new Promise(r => setTimeout(r, 600));
-    const buffer = await page.pdf({
-      format: 'Letter',
-      landscape: true,
-      printBackground: true,
-      margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
+    (ci.traffic || []).forEach(t => {
+      entries.push({
+        time: t.time_sent || ci.time_in || '', from: t.from_callsign || ci.callsign, to: t.deliver_to || '',
+        tactical: ci.tactical_call || '', msgNum: t.msg_number || '', prec: t.precedence || '',
+        subject: t.description || (t.type + ' traffic'), passed: t.passed ? '\u2713' : '', type: 'traffic'
+      });
     });
-    if (pageCrashed) throw new Error('Page crashed during PDF generation: ' + pageCrashed.message);
-    assertValidPDF(buffer, 'ICS 309 report');
-    return buffer;
-  } catch(e) {
-    if (attempt < 2) {
-      console.warn('renderAppPageToPDFBuffer attempt ' + attempt + ' failed (' + e.message + '), retrying...');
-      await page.close().catch(() => {});
-      return renderAppPageToPDFBuffer(pathAndQuery, userId, attempt + 1);
-    }
-    throw e;
-  } finally {
-    await page.close().catch(() => {});
-  }
+  });
+  entries.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+  const totalCheckins = checkins.length;
+  const totalTraffic = entries.filter(e => e.type === 'traffic').length;
+  const pendingTraffic = entries.filter(e => e.type === 'traffic' && !e.passed).length;
+  const openIssuesCount = issues.filter(i => i.status === 'open').length;
+
+  const tbody = entries.map(e => `
+    <tr style="${e.type === 'checkin' ? 'background:#f0f8f0' : ''}">
+      <td style="border:1px solid #bbb;padding:4px 6px;font-family:monospace;white-space:nowrap">${e.time}</td>
+      <td style="border:1px solid #bbb;padding:4px 6px;font-family:monospace;font-weight:700;white-space:nowrap">${e.from}</td>
+      <td style="border:1px solid #bbb;padding:4px 6px;font-family:monospace;font-weight:700;white-space:nowrap">${e.to}</td>
+      <td style="border:1px solid #bbb;padding:4px 6px;font-size:10px">${e.tactical}</td>
+      <td style="border:1px solid #bbb;padding:4px 6px;font-family:monospace;font-size:10px">${e.msgNum}</td>
+      <td style="border:1px solid #bbb;padding:4px 6px"><span style="font-weight:700;color:${e.prec==='Emergency'?'#cc0000':e.prec==='Priority'?'#0044cc':e.prec==='Welfare'?'#996600':'#006600'}">${e.prec}</span></td>
+      <td style="border:1px solid #bbb;padding:4px 6px;min-width:200px">${e.subject}</td>
+      <td style="border:1px solid #bbb;padding:4px 6px;text-align:center;color:green;font-weight:700">${e.passed}</td>
+    </tr>`).join('');
+
+  const openedStr = session.opened_at ? parseUTCServer(session.opened_at).toLocaleString() : '';
+  const closedStr = session.closed_at ? parseUTCServer(session.closed_at).toLocaleString() : 'ONGOING';
+
+  const issueRows = issues.length ? `
+    <div style="margin-top:20px">
+      <div style="font-size:13px;font-weight:700;text-transform:uppercase;border:2px solid #000;border-bottom:none;padding:5px 8px;background:#ffe8e8">Issues Log (${openIssuesCount} open / ${issues.length} total)</div>
+      <table style="width:100%;border-collapse:collapse;border:2px solid #000">
+        <thead><tr style="background:#d8d8d8">
+          <th style="border:1px solid #555;padding:5px 6px;width:140px;text-align:left">Time</th>
+          <th style="border:1px solid #555;padding:5px 6px;width:70px;text-align:left">Priority</th>
+          <th style="border:1px solid #555;padding:5px 6px;width:70px;text-align:left">Status</th>
+          <th style="border:1px solid #555;padding:5px 6px;text-align:left">Description</th>
+        </tr></thead>
+        <tbody>${issues.map(i => `<tr style="${i.status === 'resolved' ? 'color:#888' : ''}">
+          <td style="border:1px solid #bbb;padding:4px 6px">${i.created_at || ''}</td>
+          <td style="border:1px solid #bbb;padding:4px 6px;text-transform:uppercase;font-weight:700;color:${i.priority==='critical'?'#cc0000':i.priority==='high'?'#cc6600':'#000'}">${i.priority}</td>
+          <td style="border:1px solid #bbb;padding:4px 6px">${i.status}</td>
+          <td style="border:1px solid #bbb;padding:4px 6px">${i.description}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>ICS 309 - ${(session.net_name || 'Net').replace(/</g,'&lt;')}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; padding: 16px; }
+  .form-title-row { display: flex; align-items: center; justify-content: space-between; border: 2px solid #000; border-bottom: none; padding: 6px 10px; background: #f0f0f0; }
+  .form-title { font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+  .header-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; border: 2px solid #000; border-bottom: none; }
+  .header-cell { border-right: 1px solid #000; padding: 4px 6px; }
+  .header-cell:last-child { border-right: none; }
+  .field-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #555; letter-spacing: 0.05em; display: block; margin-bottom: 2px; }
+  .field-value { font-size: 12px; font-weight: 600; min-height: 16px; }
+  table { width: 100%; border-collapse: collapse; border: 2px solid #000; }
+  th { background: #d8d8d8; }
+  .footer-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; border: 2px solid #000; border-top: none; }
+  .footer-cell { border-right: 1px solid #000; padding: 5px 6px; }
+  .footer-cell:last-child { border-right: none; }
+  .sig-block { margin-top: 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; }
+  .sig-line { border-top: 1px solid #000; padding-top: 4px; font-size: 10px; color: #444; }
+</style>
+</head>
+<body>
+<div class="form-title-row">
+  <div class="form-title">ICS 309 &mdash; Communications Log</div>
+  <div style="font-size:11px;color:#555">ICS 309</div>
+</div>
+<div class="header-grid">
+  <div class="header-cell"><span class="field-label">1. Incident Name</span><div class="field-value">${session.incident_name || session.net_name || ''}</div></div>
+  <div class="header-cell"><span class="field-label">2. Operational Period &mdash; Date From</span><div class="field-value">${openedStr}</div></div>
+  <div class="header-cell"><span class="field-label">Date / Time To</span><div class="field-value">${closedStr}</div></div>
+  <div class="header-cell"><span class="field-label">Activation Type</span><div class="field-value">${session.activation_type || 'Net'}</div></div>
+</div>
+<div class="header-grid">
+  <div class="header-cell"><span class="field-label">3. Radio Operator Name / Net Control</span><div class="field-value">${session.nc_callsign || ''}</div></div>
+  <div class="header-cell"><span class="field-label">Backup Net Control</span><div class="field-value">${session.bnc_callsign || ''}</div></div>
+  <div class="header-cell"><span class="field-label">4. Frequency / Mode</span><div class="field-value">${(session.frequency || '') + ' ' + (session.mode || '')}</div></div>
+  <div class="header-cell"><span class="field-label">5. Total Check-ins</span><div class="field-value">${totalCheckins}</div></div>
+</div>
+<table>
+  <thead><tr>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:55px">Time</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:80px">From</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:80px">To</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:90px">Tactical Call</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:55px">Msg #</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:70px">Precedence</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left">Subject / Message</th>
+    <th style="border:1px solid #555;padding:5px 6px;text-align:left;width:45px">&#10003;</th>
+  </tr></thead>
+  <tbody>${tbody}</tbody>
+</table>
+<div class="footer-grid">
+  <div class="footer-cell"><span class="field-label">Total Check-ins</span><div class="field-value">${totalCheckins}</div></div>
+  <div class="footer-cell"><span class="field-label">Total Messages</span><div class="field-value">${totalTraffic}</div></div>
+  <div class="footer-cell"><span class="field-label">Pending Traffic</span><div class="field-value" style="color:${pendingTraffic > 0 ? '#cc0000' : 'inherit'}">${pendingTraffic}</div></div>
+  <div class="footer-cell"><span class="field-label">Open Issues</span><div class="field-value" style="color:${openIssuesCount > 0 ? '#cc6600' : 'inherit'}">${openIssuesCount}</div></div>
+</div>
+${issueRows}
+<div class="sig-block">
+  <div class="sig-line">Net Control Signature / Callsign: ${session.nc_callsign || '_____________'}</div>
+  <div class="sig-line">Backup Net Control: ${session.bnc_callsign || '_____________'}</div>
+  <div class="sig-line">Date: ${session.net_date || '_____________'}</div>
+  <div class="sig-line">Prepared by: _____________________</div>
+</div>
+</body></html>`;
 }
 
-// Sends the closed-net report (standard PDF or ICS 309) to all is_admin-flagged accounts
+// Sends the closed-net report (standard or ICS 309) to all is_admin-flagged accounts.
+// The report is shown directly in the email body, with the same HTML also attached as
+// a standalone .html file admins can save or open in a browser.
 async function emailNetReportToAdmins(session, format, requestingUser) {
   const adminEmails = queries.getSystemAdminEmails.all().map(r => r.email).filter(Boolean);
   if (!adminEmails.length) return { ok: false, error: 'No admin accounts have an email on file.' };
 
-  let pdfBuffer, filenameBase;
+  let reportHTML, filenameBase, formatLabel;
   if (format === 'ics309') {
-    pdfBuffer = await renderAppPageToPDFBuffer('/ics309/' + session.id, requestingUser.id);
+    const checkins = getFullCheckins(session.id);
+    const issues = queries.getIssuesBySession.all(session.id);
+    reportHTML = buildICS309HTML(session, checkins, issues);
     filenameBase = 'ICS309-' + (session.net_name || 'net').replace(/\s+/g, '-') + '-' + (session.net_date || '');
+    formatLabel = 'ICS 309 Communications Log';
   } else {
     const checkins = getFullCheckins(session.id);
-    const html = buildStandardReportHTML(session, checkins);
-    pdfBuffer = await renderHTMLToPDFBuffer(html);
+    reportHTML = buildStandardReportHTML(session, checkins);
     filenameBase = (session.net_name || 'net-log').replace(/\s+/g, '-') + '-' + (session.net_date || '');
+    formatLabel = 'Net Log Report';
   }
 
-  const base64 = pdfBuffer.toString('base64');
-  // Round-trip verification: decode the base64 right back and compare byte-for-byte
-  // against the original buffer. Catches any encoding corruption before we ever email it.
-  const roundTrip = Buffer.from(base64, 'base64');
-  if (!roundTrip.equals(pdfBuffer)) {
-    throw new Error('Base64 round-trip mismatch - PDF buffer was corrupted during encoding (original ' + pdfBuffer.length + ' bytes, round-trip ' + roundTrip.length + ' bytes).');
-  }
-  console.log('Base64 round-trip verified OK -', pdfBuffer.length, 'bytes ->', base64.length, 'base64 chars');
-  const filename = filenameBase + '.pdf';
-  const formatLabel = format === 'ics309' ? 'ICS 309 Communications Log' : 'Net Log Report';
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
-      <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0">
-        <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
-        <p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">${formatLabel}</p>
+  const filename = filenameBase + '.html';
+  const base64 = Buffer.from(reportHTML, 'utf8').toString('base64');
+
+  // Wrap the report HTML in an outer shell so it displays cleanly inside the email body
+  // (most email clients strip/ignore <head>/<style> on inline content, so the report's
+  // own inline styles still apply, but we also add a short intro above it).
+  const emailHTML = `
+    <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto">
+      <div style="background:#085041;padding:18px 22px;border-radius:8px 8px 0 0">
+        <h1 style="color:#fff;margin:0;font-size:18px">Clay ARES Net Logger</h1>
+        <p style="color:#a8ddc9;margin:4px 0 0;font-size:13px">${formatLabel} &mdash; closed by ${requestingUser.callsign}</p>
       </div>
-      <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
-        <p style="color:#1a1a18;font-size:15px;margin:0 0 12px"><strong>${session.net_name || 'Net'}</strong> closed by <strong>${requestingUser.callsign}</strong>.</p>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:12px">
-          <tr><td style="padding:6px 10px;background:#E1F5EE;font-weight:bold;color:#085041;width:120px">Date</td><td style="padding:6px 10px;background:#fff;border:1px solid #e2e2de">${session.net_date || ''}</td></tr>
-          <tr><td style="padding:6px 10px;background:#E1F5EE;font-weight:bold;color:#085041">Net Control</td><td style="padding:6px 10px;background:#fff;border:1px solid #e2e2de">${session.nc_callsign || ''}</td></tr>
-          <tr><td style="padding:6px 10px;background:#E1F5EE;font-weight:bold;color:#085041">Format</td><td style="padding:6px 10px;background:#fff;border:1px solid #e2e2de">${formatLabel}</td></tr>
-        </table>
-        <p style="color:#6b6b68;font-size:13px;margin:0">The full report is attached as a PDF.</p>
+      <div style="padding:16px 0 8px;background:#fff">
+        ${reportHTML.replace(/<!DOCTYPE[^>]*>/i, '').replace(/<\/?html[^>]*>/gi, '').replace(/<head>[\s\S]*?<\/head>/i, '').replace(/<\/?body[^>]*>/gi, '')}
       </div>
+      <p style="color:#6b6b68;font-size:12px;margin:12px 0 0">The same report is attached as an HTML file for saving or printing.</p>
     </div>`;
 
   let lastResult = { ok: true };
   for (const email of adminEmails) {
-    lastResult = await sendEmailWithAttachment(email, formatLabel + ' - ' + (session.net_name || 'Net') + ' - ' + (session.net_date || ''), html, { filename, base64 });
+    lastResult = await sendEmailWithAttachment(email, formatLabel + ' - ' + (session.net_name || 'Net') + ' - ' + (session.net_date || ''), emailHTML, { filename, base64 });
   }
   return lastResult;
 }
