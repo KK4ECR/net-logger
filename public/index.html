@@ -569,6 +569,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn primary" onclick="openICS309()"><i class="ti ti-file-text"></i> View / Print ICS 309</button>
             <button class="btn" onclick="downloadICS309CSV()"><i class="ti ti-file-spreadsheet"></i> Download ICS 309 CSV</button>
+            <button class="btn" id="email-ics309-btn" onclick="emailReportToAdmins('ics309')" style="display:none"><i class="ti ti-mail"></i> Email to Admins</button>
           </div>
         </div>
         <div class="panel">
@@ -577,6 +578,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn" onclick="exportCSV()"><i class="ti ti-file-spreadsheet"></i> Export CSV</button>
             <button class="btn amber" onclick="exportPDF()"><i class="ti ti-file-text"></i> Export PDF</button>
+            <button class="btn" id="email-standard-btn" onclick="emailReportToAdmins('standard')" style="display:none"><i class="ti ti-mail"></i> Email to Admins</button>
           </div>
         </div>
         <div class="panel">
@@ -905,7 +907,9 @@ async function closeNet() {
     appState.session.status = 'closed';
     updateSessionUI();
     updateCloseButtonState();
+    updateEmailReportButtons();
     showPage('log');
+    promptPostCloseReport();
   } catch (e) { alert(e.message); }
 }
 
@@ -918,7 +922,9 @@ async function closeNetFromCheckin() {
     appState.session.status = 'closed';
     updateSessionUI();
     updateCloseButtonState();
+    updateEmailReportButtons();
     showPage('log');
+    promptPostCloseReport();
   } catch(e) { alert(e.message); }
 }
 
@@ -928,6 +934,52 @@ function updateCloseButtonState() {
   const isOpen = appState.session && appState.session.status === 'open';
   const isNC = appState.user && appState.user.role === 'netcontrol';
   btn.disabled = !isOpen || !isNC;
+}
+
+// Email-to-admins buttons only make sense for a closed net, and only Net Control may send them
+function updateEmailReportButtons() {
+  const isNC = appState.user && appState.user.role === 'netcontrol';
+  const isClosed = appState.session && appState.session.status === 'closed';
+  const show = isNC && isClosed;
+  const ics309Btn = document.getElementById('email-ics309-btn');
+  const standardBtn = document.getElementById('email-standard-btn');
+  if (ics309Btn) ics309Btn.style.display = show ? 'inline-flex' : 'none';
+  if (standardBtn) standardBtn.style.display = show ? 'inline-flex' : 'none';
+}
+
+async function emailReportToAdmins(format) {
+  if (!appState.session) { alert('No session to report on.'); return; }
+  const formatLabel = format === 'ics309' ? 'ICS 309' : 'standard PDF';
+  if (!confirm('Email the ' + formatLabel + ' report for "' + (appState.session.net_name || 'this net') + '" to all admins?')) return;
+  const btnId = format === 'ics309' ? 'email-ics309-btn' : 'email-standard-btn';
+  const btn = document.getElementById(btnId);
+  const originalHTML = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Sending...'; }
+  try {
+    await api('POST', '/session/' + appState.session.id + '/email-report', { format });
+    alert('Report emailed to admins.');
+  } catch(e) {
+    alert('Could not send report: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+  }
+}
+
+// Fired immediately after Net Control closes a net - asks which report they want to review,
+// shows it, then offers to email that same report to admins.
+function promptPostCloseReport() {
+  if (!appState.user || appState.user.role !== 'netcontrol') return;
+  const choice = confirm(
+    'Net closed. Click OK to view the ICS 309 Communications Log, or Cancel to view the standard PDF report.\n\n' +
+    'Either report can then be emailed to admins.'
+  );
+  if (choice) {
+    openICS309();
+    setTimeout(() => { if (confirm('Email this ICS 309 report to admins now?')) emailReportToAdmins('ics309'); }, 600);
+  } else {
+    exportPDF();
+    setTimeout(() => { if (confirm('Email this standard PDF report to admins now?')) emailReportToAdmins('standard'); }, 600);
+  }
 }
 
 async function testQRZ() {
@@ -1435,7 +1487,7 @@ function showPage(name) {
   if (name === 'map') { initMap(); renderMap(); }
   if (name === 'issues') { loadIssues(); }
   if (name === 'preambles') loadPreambles();
-  if (name === 'export') { loadSessionHistory(); }
+  if (name === 'export') { loadSessionHistory(); updateEmailReportButtons(); }
   if (name === 'schedule') { loadSchedule(); }
 }
 

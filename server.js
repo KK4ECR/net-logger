@@ -4,7 +4,8 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
-const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins } = require('./database');
+const { db, queries, schedQueries, resetQueries, settingsQueries, renderTokenQueries, getFullCheckins } = require('./database');
+const puppeteer = require('puppeteer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,16 +27,49 @@ app.use(session({
   cookie: { maxAge: 8 * 60 * 60 * 1000 }
 }));
 
+// Checks for a valid, unexpired, single-use render token (?renderToken=...) and, if present,
+// resolves it to a real user without touching the session store - used so Puppeteer can load
+// authenticated pages server-side (e.g. /ics309/:id) to generate PDFs for email.
+// Tokens are consumed (marked used) the first time the *page* is requested, not on every
+// subsequent API call the page makes, so the page's own client-side fetches still work.
+function tryRenderToken(req) {
+  const token = req.query.renderToken;
+  if (!token) return null;
+  const row = renderTokenQueries.getByToken.get(token);
+  if (!row || row.used || new Date(row.expires_at) < new Date()) return null;
+  const user = queries.getUserById.get(row.user_id);
+  if (!user) return null;
+  return { row, user };
+}
+
 function requireAuth(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
-  next();
+  if (req.session.userId) return next();
+  const resolved = tryRenderToken(req);
+  if (resolved) {
+    req.session.userId = resolved.user.id;
+    req.session.callsign = resolved.user.callsign;
+    req.session.role = resolved.user.role;
+    if (!resolved.row.used) renderTokenQueries.markUsed.run(resolved.row.id);
+    return next();
+  }
+  return res.status(401).json({ error: 'Not authenticated' });
 }
 
 function requireRole(...roles) {
   return (req, res, next) => {
-    if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
-    if (!roles.includes(req.session.role)) return res.status(403).json({ error: 'Insufficient permissions' });
-    next();
+    if (req.session.userId) {
+      if (!roles.includes(req.session.role)) return res.status(403).json({ error: 'Insufficient permissions' });
+      return next();
+    }
+    const resolved = tryRenderToken(req);
+    if (resolved && roles.includes(resolved.user.role)) {
+      req.session.userId = resolved.user.id;
+      req.session.callsign = resolved.user.callsign;
+      req.session.role = resolved.user.role;
+      if (!resolved.row.used) renderTokenQueries.markUsed.run(resolved.row.id);
+      return next();
+    }
+    return res.status(401).json({ error: 'Not authenticated' });
   };
 }
 
@@ -54,6 +88,29 @@ async function sendEmail(to, subject, html) {
     if (!r.ok) console.error('Resend error:', data);
     else console.log('Email sent to', to, '- id:', data.id);
   } catch(e) { console.error('Email send failed:', e.message); }
+}
+
+// Same as sendEmail but supports a PDF (or other file) attachment, base64-encoded
+async function sendEmailWithAttachment(to, subject, html, attachment) {
+  if (!RESEND_API_KEY) { console.log('RESEND_API_KEY not set, skipping email with attachment to', to); return { ok: false, error: 'Email not configured' }; }
+  try {
+    const body = { from: 'Clay ARES Net Logger <noreply@resend.dev>', to: [to], subject, html };
+    if (attachment) {
+      body.attachments = [{ filename: attachment.filename, content: attachment.base64 }];
+    }
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    if (!r.ok) { console.error('Resend error:', data); return { ok: false, error: data.message || 'Send failed' }; }
+    console.log('Email with attachment sent to', to, '- id:', data.id);
+    return { ok: true };
+  } catch(e) {
+    console.error('Email with attachment send failed:', e.message);
+    return { ok: false, error: e.message };
+  }
 }
 
 function emailNewRequestToAdmin(request) {
@@ -402,6 +459,24 @@ app.post('/api/session/close', requireRole('netcontrol'), (req, res) => {
   if (!session) return res.status(404).json({ error: 'No open session' });
   queries.closeSession.run(req.session.userId, session.id);
   res.json({ ok: true });
+});
+
+// Generates a PDF of the closed net's report (standard or ICS 309) and emails it to all
+// admin-flagged accounts. Net Control responsibility - confirmed and triggered from the UI.
+app.post('/api/session/:id/email-report', requireRole('netcontrol'), async (req, res) => {
+  const { format } = req.body; // 'standard' or 'ics309'
+  if (!['standard', 'ics309'].includes(format)) return res.status(400).json({ error: 'Invalid format' });
+  const session = queries.getSessionById.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const user = queries.getUserById.get(req.session.userId);
+  try {
+    const result = await emailNetReportToAdmins(session, format, user);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not send report' });
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('email-report error:', e.message);
+    res.status(500).json({ error: 'Could not generate or send the report: ' + e.message });
+  }
 });
 
 app.get('/api/session/history', requireAuth, (req, res) => {
@@ -1144,5 +1219,178 @@ checkMonthlyScheduleExtend();
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// ─── PUPPETEER PDF GENERATION ───────────────────────────────────────────────────
+let browserInstance = null;
+async function getBrowser() {
+  if (browserInstance && browserInstance.isConnected()) return browserInstance;
+  browserInstance = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
+  return browserInstance;
+}
+
+function parseUTCServer(dtStr) {
+  if (!dtStr) return null;
+  return new Date(dtStr.includes('T') || dtStr.endsWith('Z') ? dtStr : dtStr.replace(' ', 'T') + 'Z');
+}
+
+// Builds the same HTML/layout as the browser-side "Export PDF" button, from server-side data
+function buildStandardReportHTML(session, checkins) {
+  const dur = session.opened_at && session.closed_at
+    ? Math.round((parseUTCServer(session.closed_at) - parseUTCServer(session.opened_at)) / 60000) + ' min' : '';
+  const openedStr = session.opened_at ? parseUTCServer(session.opened_at).toLocaleString() : 'N/A';
+  const closedStr = session.closed_at ? parseUTCServer(session.closed_at).toLocaleString() : 'N/A';
+
+  const rows = checkins.map((ci, i) => {
+    const notes = [];
+    if (ci.has_comments) notes.push(ci.comment_count + ' comment(s)' + (ci.comment_notes ? ': ' + ci.comment_notes : ''));
+    (ci.traffic || []).forEach(t => notes.push('[' + t.precedence + '] ' + t.type + ' → ' + t.deliver_to + (t.passed ? ' (passed)' : '')));
+    return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
+      <td style="padding:5px 7px;color:#999;white-space:nowrap">${ci.seq}</td>
+      <td style="padding:5px 7px;font-weight:700;font-family:monospace;white-space:nowrap">${ci.callsign}</td>
+      <td style="padding:5px 7px">${ci.name || ''}</td>
+      <td style="padding:5px 7px;white-space:nowrap">${ci.license_class || ''}</td>
+      <td style="padding:5px 7px;font-family:monospace;white-space:nowrap">${ci.time_in || ''}</td>
+      <td style="padding:5px 7px;font-family:monospace;color:#185FA5;white-space:nowrap;font-size:10px">${ci.usng || '&mdash;'}</td>
+      <td style="padding:5px 7px;color:#E11F26;font-weight:600;white-space:nowrap;font-size:10px">${ci.w3w ? '///' + ci.w3w : '&mdash;'}</td>
+      <td style="padding:5px 7px;color:#666;white-space:nowrap">${ci.logged_by_callsign || ''}</td>
+      <td style="padding:5px 7px;color:#555;font-size:10px">${notes.join(' &middot; ')}</td>
+    </tr>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>${(session.net_name || 'Net Log').replace(/</g,'&lt;')}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #1a1a18; background: #fff; padding: 24px 28px; }
+  .header { border-bottom: 2.5px solid #1D9E75; padding-bottom: 10px; margin-bottom: 16px; }
+  .net-title { font-size: 22px; font-weight: 700; color: #085041; margin-bottom: 4px; }
+  .net-meta { font-size: 12px; color: #555; margin-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { text-align: left; padding: 6px 7px; font-size: 10px; font-weight: 700; color: #555; border-bottom: 1.5px solid #ccc; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; background: #f4f4f0; }
+  td { vertical-align: top; }
+  .footer-row { margin-top: 14px; font-size: 10px; color: #666; border-top: 0.5px solid #ddd; padding-top: 8px; }
+  .sig-row { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 40px; }
+  .sig-line { border-top: 0.5px solid #ccc; padding-top: 6px; font-size: 10px; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="net-title">${(session.net_name || 'Net Log').replace(/</g,'&lt;')}</div>
+  <div class="net-meta">Net Control: <strong>${session.nc_callsign || 'N/A'}</strong>${session.bnc_callsign ? ' &nbsp;&middot;&nbsp; Backup NC: <strong>' + session.bnc_callsign + '</strong>' : ''} &nbsp;&middot;&nbsp; ${session.frequency || ''} MHz ${session.mode || ''} &nbsp;&middot;&nbsp; ${session.net_date || ''}</div>
+  <div class="net-meta">Opened: ${openedStr} &nbsp;&middot;&nbsp; Closed: ${closedStr}${dur ? ' &nbsp;&middot;&nbsp; Duration: ' + dur : ''}</div>
+</div>
+<table>
+  <thead><tr>
+    <th>#</th><th>Callsign</th><th>Name</th><th>Class</th><th>Time</th>
+    <th>USNG (1m)</th><th>what3words</th><th>Logged by</th><th>Notes / Traffic</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer-row">
+  Total check-ins: ${checkins.length} &nbsp;&middot;&nbsp;
+  With USNG: ${checkins.filter(c => c.usng).length} &nbsp;&middot;&nbsp;
+  With traffic: ${checkins.filter(c => c.has_traffic).length} &nbsp;&middot;&nbsp;
+  With comments: ${checkins.filter(c => c.has_comments).length}
+</div>
+<div class="sig-row">
+  <div class="sig-line">Net Control: ${session.nc_callsign || '_____________________'}</div>
+  <div class="sig-line">Backup NC: ${session.bnc_callsign || '_____________________'}</div>
+  <div class="sig-line">Date: ${session.net_date || '_____________________'}</div>
+</div>
+</body></html>`;
+}
+
+async function renderHTMLToPDFBuffer(html, options = {}) {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const buffer = await page.pdf({
+      format: 'Letter',
+      landscape: options.landscape !== false,
+      printBackground: true,
+      margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
+    });
+    return buffer;
+  } finally {
+    await page.close();
+  }
+}
+
+// Renders a full app page (e.g. /ics309/:id) to PDF by authenticating Puppeteer with a
+// short-lived, single-use render token instead of trying to share session cookies.
+async function renderAppPageToPDFBuffer(pathAndQuery, userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString(); // 2 minutes
+  renderTokenQueries.create.run(userId, token, expiresAt);
+
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    const separator = pathAndQuery.includes('?') ? '&' : '?';
+    const url = 'http://127.0.0.1:' + PORT + pathAndQuery + separator + 'renderToken=' + token;
+    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+    // Give client-side fetch()/render logic a brief moment to finish painting tables
+    await new Promise(r => setTimeout(r, 600));
+    const buffer = await page.pdf({
+      format: 'Letter',
+      landscape: true,
+      printBackground: true,
+      margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
+    });
+    return buffer;
+  } finally {
+    await page.close();
+  }
+}
+
+// Sends the closed-net report (standard PDF or ICS 309) to all is_admin-flagged accounts
+async function emailNetReportToAdmins(session, format, requestingUser) {
+  const adminEmails = queries.getSystemAdminEmails.all().map(r => r.email).filter(Boolean);
+  if (!adminEmails.length) return { ok: false, error: 'No admin accounts have an email on file.' };
+
+  let pdfBuffer, filenameBase;
+  if (format === 'ics309') {
+    pdfBuffer = await renderAppPageToPDFBuffer('/ics309/' + session.id, requestingUser.id);
+    filenameBase = 'ICS309-' + (session.net_name || 'net').replace(/\s+/g, '-') + '-' + (session.net_date || '');
+  } else {
+    const checkins = getFullCheckins(session.id);
+    const html = buildStandardReportHTML(session, checkins);
+    pdfBuffer = await renderHTMLToPDFBuffer(html);
+    filenameBase = (session.net_name || 'net-log').replace(/\s+/g, '-') + '-' + (session.net_date || '');
+  }
+
+  const base64 = pdfBuffer.toString('base64');
+  const filename = filenameBase + '.pdf';
+  const formatLabel = format === 'ics309' ? 'ICS 309 Communications Log' : 'Net Log Report';
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0">
+        <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
+        <p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">${formatLabel}</p>
+      </div>
+      <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+        <p style="color:#1a1a18;font-size:15px;margin:0 0 12px"><strong>${session.net_name || 'Net'}</strong> closed by <strong>${requestingUser.callsign}</strong>.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:12px">
+          <tr><td style="padding:6px 10px;background:#E1F5EE;font-weight:bold;color:#085041;width:120px">Date</td><td style="padding:6px 10px;background:#fff;border:1px solid #e2e2de">${session.net_date || ''}</td></tr>
+          <tr><td style="padding:6px 10px;background:#E1F5EE;font-weight:bold;color:#085041">Net Control</td><td style="padding:6px 10px;background:#fff;border:1px solid #e2e2de">${session.nc_callsign || ''}</td></tr>
+          <tr><td style="padding:6px 10px;background:#E1F5EE;font-weight:bold;color:#085041">Format</td><td style="padding:6px 10px;background:#fff;border:1px solid #e2e2de">${formatLabel}</td></tr>
+        </table>
+        <p style="color:#6b6b68;font-size:13px;margin:0">The full report is attached as a PDF.</p>
+      </div>
+    </div>`;
+
+  let lastResult = { ok: true };
+  for (const email of adminEmails) {
+    lastResult = await sendEmailWithAttachment(email, formatLabel + ' - ' + (session.net_name || 'Net') + ' - ' + (session.net_date || ''), html, { filename, base64 });
+  }
+  return lastResult;
+}
 
 app.listen(PORT, () => console.log(`Net Logger running on port ${PORT}`));
