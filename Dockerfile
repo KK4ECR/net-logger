@@ -18,6 +18,9 @@ WORKDIR /app
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Fail the BUILD (not silently at runtime) if the expected Chromium binary is missing
+RUN test -x "$PUPPETEER_EXECUTABLE_PATH" || (echo "ERROR: Chromium not found at $PUPPETEER_EXECUTABLE_PATH" && ls -la /usr/bin/ | grep -i chrom && exit 1)
+
 COPY package*.json ./
 RUN npm install --only=production
 

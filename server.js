@@ -1224,10 +1224,23 @@ app.get('*', (req, res) => {
 let browserInstance = null;
 async function getBrowser() {
   if (browserInstance && browserInstance.isConnected()) return browserInstance;
-  browserInstance = await puppeteer.launch({
+  const launchOptions = {
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
+    args: [
+      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+      '--disable-gpu', '--single-process'
+    ]
+  };
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  console.log('Launching Puppeteer with executablePath:', launchOptions.executablePath || '(Puppeteer default)');
+  try {
+    browserInstance = await puppeteer.launch(launchOptions);
+  } catch(e) {
+    console.error('Puppeteer launch failed:', e.message);
+    throw new Error('PDF generation is unavailable right now (browser engine failed to start): ' + e.message);
+  }
   return browserInstance;
 }
 
@@ -1306,6 +1319,13 @@ function buildStandardReportHTML(session, checkins) {
 </body></html>`;
 }
 
+function assertValidPDF(buffer, context) {
+  if (!buffer || buffer.length < 100 || buffer.toString('utf8', 0, 5) !== '%PDF-') {
+    throw new Error('PDF generation produced invalid output (' + context + ', ' + (buffer ? buffer.length : 0) + ' bytes). The browser engine may have failed to render the page correctly.');
+  }
+  console.log('PDF generated OK:', context, '-', buffer.length, 'bytes, header:', buffer.toString('utf8', 0, 8));
+}
+
 async function renderHTMLToPDFBuffer(html, options = {}) {
   const browser = await getBrowser();
   const page = await browser.newPage();
@@ -1317,6 +1337,7 @@ async function renderHTMLToPDFBuffer(html, options = {}) {
       printBackground: true,
       margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
     });
+    assertValidPDF(buffer, 'standard report');
     return buffer;
   } finally {
     await page.close();
@@ -1344,6 +1365,7 @@ async function renderAppPageToPDFBuffer(pathAndQuery, userId) {
       printBackground: true,
       margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
     });
+    assertValidPDF(buffer, 'ICS 309 report');
     return buffer;
   } finally {
     await page.close();
@@ -1367,6 +1389,13 @@ async function emailNetReportToAdmins(session, format, requestingUser) {
   }
 
   const base64 = pdfBuffer.toString('base64');
+  // Round-trip verification: decode the base64 right back and compare byte-for-byte
+  // against the original buffer. Catches any encoding corruption before we ever email it.
+  const roundTrip = Buffer.from(base64, 'base64');
+  if (!roundTrip.equals(pdfBuffer)) {
+    throw new Error('Base64 round-trip mismatch - PDF buffer was corrupted during encoding (original ' + pdfBuffer.length + ' bytes, round-trip ' + roundTrip.length + ' bytes).');
+  }
+  console.log('Base64 round-trip verified OK -', pdfBuffer.length, 'bytes ->', base64.length, 'base64 chars');
   const filename = filenameBase + '.pdf';
   const formatLabel = format === 'ics309' ? 'ICS 309 Communications Log' : 'Net Log Report';
   const html = `
