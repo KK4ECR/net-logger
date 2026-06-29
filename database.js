@@ -138,6 +138,15 @@ db.exec(`
     UNIQUE(scheduled_net_id, position)
   );
 
+  CREATE TABLE IF NOT EXISTS password_resets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    token TEXT UNIQUE NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS holidays (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     holiday_date TEXT UNIQUE NOT NULL,
@@ -540,6 +549,13 @@ function bootstrapHolidays() {
 bootstrapHolidays();
 
 // ─── SCHEDULING QUERIES ────────────────────────────────────────────────────────
+const resetQueries = {
+  createReset: db.prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)'),
+  getResetByToken: db.prepare('SELECT * FROM password_resets WHERE token = ?'),
+  markResetUsed: db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?'),
+  invalidateUserResets: db.prepare("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0"),
+};
+
 const schedQueries = {
   getHolidaysInRange: db.prepare('SELECT * FROM holidays WHERE holiday_date BETWEEN ? AND ? ORDER BY holiday_date'),
   getAllHolidays: db.prepare('SELECT * FROM holidays ORDER BY holiday_date'),
@@ -570,4 +586,4 @@ const schedQueries = {
   markReminderSent: db.prepare('UPDATE schedule_signups SET reminder_24h_sent = ?, reminder_1h_sent = ? WHERE id = ?'),
 };
 
-module.exports = { db, queries, schedQueries, getFullCheckins };
+module.exports = { db, queries, schedQueries, resetQueries, getFullCheckins };

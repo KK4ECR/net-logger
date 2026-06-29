@@ -3,7 +3,8 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const fetch = require('node-fetch');
-const { db, queries, schedQueries, getFullCheckins } = require('./database');
+const crypto = require('crypto');
+const { db, queries, schedQueries, resetQueries, getFullCheckins } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -226,6 +227,60 @@ app.post('/api/auth/login', (req, res) => {
   req.session.callsign = user.callsign;
   req.session.role = user.role;
   res.json({ callsign: user.callsign, role: user.role });
+});
+
+// ─── PASSWORD RESET ────────────────────────────────────────────────────────────
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { callsign } = req.body;
+  // Always respond success regardless of whether the callsign exists, so we don't leak account existence
+  const genericResponse = { ok: true, message: 'If that callsign has an account with an email on file, a reset link has been sent.' };
+  if (!callsign) return res.json(genericResponse);
+  const user = queries.getUserByCallsign.get(callsign);
+  if (!user || !user.email) return res.json(genericResponse);
+
+  resetQueries.invalidateUserResets.run(user.id);
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  resetQueries.createReset.run(user.id, token, expiresAt);
+
+  const resetUrl = APP_URL + '/reset-password.html?token=' + token;
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0">
+        <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
+        <p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">Password Reset Requested</p>
+      </div>
+      <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+        <p style="color:#1a1a18;font-size:15px;margin:0 0 12px">Hello ${user.full_name || user.callsign},</p>
+        <p style="color:#1a1a18;font-size:15px;margin:0 0 16px">A password reset was requested for the callsign <strong>${user.callsign}</strong>. Click the button below to set a new password. This link expires in 1 hour.</p>
+        <a href="${resetUrl}" style="display:inline-block;background:#1D9E75;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px">Reset Password</a>
+        <p style="color:#6b6b68;font-size:13px;margin:20px 0 0">If you did not request this, you can safely ignore this email — your password will not be changed.</p>
+      </div>
+    </div>`;
+  await sendEmail(user.email, 'Clay ARES Net Logger — Reset your password', html);
+  res.json(genericResponse);
+});
+
+app.get('/api/auth/reset-password/:token', (req, res) => {
+  const reset = resetQueries.getResetByToken.get(req.params.token);
+  if (!reset || reset.used || new Date(reset.expires_at) < new Date()) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+  }
+  const user = queries.getUserById.get(reset.user_id);
+  res.json({ valid: true, callsign: user ? user.callsign : null });
+});
+
+app.post('/api/auth/reset-password/:token', (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const reset = resetQueries.getResetByToken.get(req.params.token);
+  if (!reset || reset.used || new Date(reset.expires_at) < new Date()) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+  }
+  const hash = bcrypt.hashSync(password, 10);
+  queries.updateUserPassword.run(hash, reset.user_id);
+  resetQueries.markResetUsed.run(reset.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/logout', (req, res) => { req.session.destroy(); res.json({ ok: true }); });
