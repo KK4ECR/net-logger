@@ -3,7 +3,7 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const fetch = require('node-fetch');
-const { db, queries, getFullCheckins } = require('./database');
+const { db, queries, schedQueries, getFullCheckins } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -733,6 +733,199 @@ app.put('/api/preambles/:type', requireAuth, (req, res) => {
   queries.updatePreamble.run(title, content, req.session.callsign, req.params.type);
   res.json({ ok: true });
 });
+
+// ─── SCHEDULING ────────────────────────────────────────────────────────────────
+const SCHED_POSITIONS = ['Net Control', 'Backup Net Control', 'Traffic Rep', 'Net Logger'];
+
+function isHolidayBlocked(dateStr) {
+  // Friday before through Monday after the given Sunday date
+  const d = new Date(dateStr + 'T00:00:00');
+  const friBefore = new Date(d); friBefore.setDate(d.getDate() - 2);
+  const monAfter = new Date(d); monAfter.setDate(d.getDate() + 1);
+  const fmt = x => x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+  const holidays = schedQueries.getHolidaysInRange.all(fmt(friBefore), fmt(monAfter));
+  return holidays.length > 0 ? holidays[0] : null;
+}
+
+function getUpcomingSundays(monthsAhead) {
+  const sundays = [];
+  const today = new Date();
+  let d = new Date(today);
+  // move to next Sunday (or today if today is Sunday)
+  d.setDate(d.getDate() + ((7 - d.getDay()) % 7));
+  const endDate = new Date(today);
+  endDate.setMonth(endDate.getMonth() + monthsAhead);
+  while (d <= endDate) {
+    const fmt = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    sundays.push(fmt);
+    d.setDate(d.getDate() + 7);
+  }
+  return sundays;
+}
+
+// Get the schedule for the next N months, auto-creating scheduled_net rows as needed
+app.get('/api/schedule', requireAuth, (req, res) => {
+  const months = Math.min(parseInt(req.query.months) || 6, 6);
+  const sundays = getUpcomingSundays(months);
+  const result = sundays.map(dateStr => {
+    let net = schedQueries.getScheduledNetByDate.get(dateStr);
+    if (!net) {
+      const holiday = isHolidayBlocked(dateStr);
+      const status = holiday ? 'skipped' : 'scheduled';
+      schedQueries.upsertScheduledNet.run(dateStr, status);
+      net = schedQueries.getScheduledNetByDate.get(dateStr);
+      if (holiday) {
+        schedQueries.setNetStatus.run('skipped', holiday.name, 0, dateStr);
+        net = schedQueries.getScheduledNetByDate.get(dateStr);
+      }
+    }
+    const signups = schedQueries.getSignupsByNet.all(net.id);
+    const positions = {};
+    SCHED_POSITIONS.forEach(pos => {
+      const s = signups.find(s => s.position === pos);
+      positions[pos] = s ? { signup_id: s.id, callsign: s.callsign, full_name: s.full_name, user_id: s.user_id } : null;
+    });
+    return { id: net.id, net_date: net.net_date, status: net.status, skip_reason: net.skip_reason, overridden_by_admin: net.overridden_by_admin, positions };
+  });
+  res.json(result);
+});
+
+// Admin override: force a net to run despite holiday, or force-skip a net
+app.put('/api/schedule/:date/status', requireRole('netcontrol'), (req, res) => {
+  const { status, skip_reason } = req.body;
+  const validStatuses = ['scheduled', 'skipped'];
+  if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  let net = schedQueries.getScheduledNetByDate.get(req.params.date);
+  if (!net) {
+    schedQueries.upsertScheduledNet.run(req.params.date, status);
+  }
+  schedQueries.setNetStatus.run(status, skip_reason || null, 1, req.params.date);
+  res.json({ ok: true });
+});
+
+// Sign up for a position
+app.post('/api/schedule/:date/signup', requireAuth, (req, res) => {
+  const { position } = req.body;
+  if (!SCHED_POSITIONS.includes(position)) return res.status(400).json({ error: 'Invalid position' });
+  let net = schedQueries.getScheduledNetByDate.get(req.params.date);
+  if (!net) {
+    const holiday = isHolidayBlocked(req.params.date);
+    schedQueries.upsertScheduledNet.run(req.params.date, holiday ? 'skipped' : 'scheduled');
+    net = schedQueries.getScheduledNetByDate.get(req.params.date);
+  }
+  if (net.status === 'skipped') return res.status(409).json({ error: 'No net scheduled on this date' + (net.skip_reason ? ' (' + net.skip_reason + ')' : '') });
+  const existing = schedQueries.getSignupByNetAndPosition.get(net.id, position);
+  if (existing) return res.status(409).json({ error: 'That position is already filled for this date' });
+  try {
+    schedQueries.insertSignup.run(net.id, position, req.session.userId);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cancel a signup - the signed-up user themselves, or any netcontrol/admin
+app.delete('/api/schedule/signup/:id', requireAuth, (req, res) => {
+  const signup = schedQueries.getSignupById.get(req.params.id);
+  if (!signup) return res.status(404).json({ error: 'Signup not found' });
+  if (signup.user_id !== req.session.userId && req.session.role !== 'netcontrol') {
+    return res.status(403).json({ error: 'You can only cancel your own signup' });
+  }
+  schedQueries.deleteSignup.run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Net Control / admin can directly remove anyone from a slot, or assign by callsign
+app.post('/api/schedule/:date/assign', requireRole('netcontrol'), (req, res) => {
+  const { position, callsign } = req.body;
+  if (!SCHED_POSITIONS.includes(position)) return res.status(400).json({ error: 'Invalid position' });
+  let net = schedQueries.getScheduledNetByDate.get(req.params.date);
+  if (!net) {
+    schedQueries.upsertScheduledNet.run(req.params.date, 'scheduled');
+    net = schedQueries.getScheduledNetByDate.get(req.params.date);
+  }
+  const existing = schedQueries.getSignupByNetAndPosition.get(net.id, position);
+  if (existing) schedQueries.deleteSignup.run(existing.id);
+  if (!callsign) return res.json({ ok: true }); // just clearing the slot
+  const user = queries.getUserByCallsign.get(callsign);
+  if (!user) return res.status(404).json({ error: 'No account found for that callsign' });
+  schedQueries.insertSignup.run(net.id, position, user.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/schedule/holidays', requireAuth, (req, res) => {
+  res.json(schedQueries.getAllHolidays.all());
+});
+
+app.get('/api/schedule/my-signups', requireAuth, (req, res) => {
+  res.json(schedQueries.getSignupsByUser.all(req.session.userId));
+});
+
+// Manual all-members blast for an unfilled position
+app.post('/api/schedule/:date/notify-unfilled', requireRole('netcontrol'), async (req, res) => {
+  const net = schedQueries.getScheduledNetByDate.get(req.params.date);
+  if (!net) return res.status(404).json({ error: 'No scheduled net on that date' });
+  const signups = schedQueries.getSignupsByNet.all(net.id);
+  const filled = signups.map(s => s.position);
+  const unfilled = SCHED_POSITIONS.filter(p => !filled.includes(p));
+  if (!unfilled.length) return res.json({ ok: true, message: 'All positions filled' });
+  const allUsers = queries.getAllUsers.all().filter(u => u.email);
+  const dateDisplay = new Date(req.params.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+      <div style="background:#BA7517;padding:20px 24px;border-radius:8px 8px 0 0">
+        <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
+        <p style="color:#fde8c8;margin:4px 0 0;font-size:14px">Open Net Positions</p>
+      </div>
+      <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+        <p style="color:#1a1a18;font-size:15px;margin:0 0 12px">The following positions are still open for the net on <strong>${dateDisplay}</strong>:</p>
+        <ul style="color:#1a1a18;font-size:15px">${unfilled.map(p => '<li>' + p + '</li>').join('')}</ul>
+        <p style="color:#1a1a18;font-size:14px;margin:16px 0">Sign in to the Net Logger and visit the Schedule tab to sign up.</p>
+        <a href="${APP_URL}" style="display:inline-block;background:#1D9E75;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px">Open Net Logger</a>
+      </div>
+    </div>`;
+  allUsers.forEach(u => sendEmail(u.email, 'Clay ARES Net Logger — Open positions for ' + dateDisplay, html));
+  res.json({ ok: true, sentTo: allUsers.length, unfilled });
+});
+
+// ─── REMINDER EMAIL CRON (checked every 5 minutes) ────────────────────────────
+async function checkAndSendReminders() {
+  try {
+    const upcoming = schedQueries.getSignupsNeedingReminder.all();
+    const now = new Date();
+    for (const s of upcoming) {
+      const netDateTime = new Date(s.net_date + 'T19:30:00-05:00'); // 19:30 Eastern
+      const hoursUntil = (netDateTime - now) / (1000 * 60 * 60);
+      const dateDisplay = new Date(s.net_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+      if (hoursUntil <= 24 && hoursUntil > 23 && !s.reminder_24h_sent) {
+        await sendEmail(s.email, 'Reminder: You are signed up for ' + s.position + ' this Sunday', `
+          <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+            <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0"><h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1><p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">24 Hour Reminder</p></div>
+            <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+              <p style="font-size:15px;color:#1a1a18">Hi ${s.full_name || s.callsign},</p>
+              <p style="font-size:15px;color:#1a1a18">This is a reminder that you are signed up as <strong>${s.position}</strong> for the Clay County ARES net on <strong>${dateDisplay} at 7:30 PM</strong>.</p>
+            </div>
+          </div>`);
+        schedQueries.markReminderSent.run(1, s.reminder_1h_sent, s.id);
+      } else if (hoursUntil <= 1 && hoursUntil > 0 && !s.reminder_1h_sent) {
+        await sendEmail(s.email, 'Starting soon: ' + s.position + ' net in 1 hour', `
+          <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+            <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0"><h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1><p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">1 Hour Reminder</p></div>
+            <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+              <p style="font-size:15px;color:#1a1a18">Hi ${s.full_name || s.callsign},</p>
+              <p style="font-size:15px;color:#1a1a18">The net starts in about 1 hour. You are signed up as <strong>${s.position}</strong> tonight at <strong>7:30 PM</strong>.</p>
+            </div>
+          </div>`);
+        schedQueries.markReminderSent.run(s.reminder_24h_sent, 1, s.id);
+      }
+    }
+  } catch(e) {
+    console.error('Reminder check error:', e.message);
+  }
+}
+setInterval(checkAndSendReminders, 5 * 60 * 1000);
+checkAndSendReminders();
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

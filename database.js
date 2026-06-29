@@ -118,6 +118,32 @@ db.exec(`
     sort_order INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS scheduled_nets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    net_date TEXT UNIQUE NOT NULL,
+    status TEXT DEFAULT 'scheduled',
+    skip_reason TEXT,
+    overridden_by_admin INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS schedule_signups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_net_id INTEGER NOT NULL REFERENCES scheduled_nets(id) ON DELETE CASCADE,
+    position TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    signed_up_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    reminder_24h_sent INTEGER DEFAULT 0,
+    reminder_1h_sent INTEGER DEFAULT 0,
+    UNIQUE(scheduled_net_id, position)
+  );
+
+  CREATE TABLE IF NOT EXISTS holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holiday_date TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS preambles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT UNIQUE NOT NULL,
@@ -465,4 +491,83 @@ function getFullCheckins(sessionId) {
   }));
 }
 
-module.exports = { db, queries, getFullCheckins };
+// ─── US FEDERAL HOLIDAYS (auto-calculated, 2026-2031) ─────────────────────────
+function nthWeekdayOfMonth(year, month, weekday, n) {
+  // month is 1-12, weekday 0=Sunday...6=Saturday, n=1st,2nd,3rd...
+  const d = new Date(year, month - 1, 1);
+  let count = 0;
+  while (d.getMonth() === month - 1) {
+    if (d.getDay() === weekday) {
+      count++;
+      if (count === n) return new Date(d);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return null;
+}
+function lastWeekdayOfMonth(year, month, weekday) {
+  const d = new Date(year, month, 0); // last day of month
+  while (d.getDay() !== weekday) d.setDate(d.getDate() - 1);
+  return d;
+}
+function fmtDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function generateFederalHolidays(year) {
+  const list = [];
+  list.push([fmtDate(new Date(year, 0, 1)), "New Year's Day"]);
+  list.push([fmtDate(nthWeekdayOfMonth(year, 1, 1, 3)), "Martin Luther King Jr. Day"]);
+  list.push([fmtDate(nthWeekdayOfMonth(year, 2, 1, 3)), "Washington's Birthday (Presidents Day)"]);
+  list.push([fmtDate(lastWeekdayOfMonth(year, 5, 1)), "Memorial Day"]);
+  list.push([fmtDate(new Date(year, 5, 19)), "Juneteenth"]);
+  list.push([fmtDate(new Date(year, 6, 4)), "Independence Day"]);
+  list.push([fmtDate(nthWeekdayOfMonth(year, 9, 1, 1)), "Labor Day"]);
+  list.push([fmtDate(nthWeekdayOfMonth(year, 10, 1, 2)), "Columbus Day"]);
+  list.push([fmtDate(new Date(year, 10, 11)), "Veterans Day"]);
+  list.push([fmtDate(nthWeekdayOfMonth(year, 11, 4, 4)), "Thanksgiving Day"]);
+  list.push([fmtDate(new Date(year, 11, 25)), "Christmas Day"]);
+  return list;
+}
+
+function bootstrapHolidays() {
+  const insertHoliday = db.prepare('INSERT OR IGNORE INTO holidays (holiday_date, name) VALUES (?, ?)');
+  const thisYear = new Date().getFullYear();
+  for (let y = thisYear; y <= thisYear + 2; y++) {
+    generateFederalHolidays(y).forEach(([date, name]) => insertHoliday.run(date, name));
+  }
+}
+bootstrapHolidays();
+
+// ─── SCHEDULING QUERIES ────────────────────────────────────────────────────────
+const schedQueries = {
+  getHolidaysInRange: db.prepare('SELECT * FROM holidays WHERE holiday_date BETWEEN ? AND ? ORDER BY holiday_date'),
+  getAllHolidays: db.prepare('SELECT * FROM holidays ORDER BY holiday_date'),
+
+  getScheduledNetByDate: db.prepare('SELECT * FROM scheduled_nets WHERE net_date = ?'),
+  getScheduledNetById: db.prepare('SELECT * FROM scheduled_nets WHERE id = ?'),
+  getScheduledNetsInRange: db.prepare('SELECT * FROM scheduled_nets WHERE net_date BETWEEN ? AND ? ORDER BY net_date'),
+  upsertScheduledNet: db.prepare(`INSERT INTO scheduled_nets (net_date, status) VALUES (?, ?)
+    ON CONFLICT(net_date) DO UPDATE SET status = excluded.status`),
+  setNetStatus: db.prepare('UPDATE scheduled_nets SET status = ?, skip_reason = ?, overridden_by_admin = ? WHERE net_date = ?'),
+
+  getSignupsByNet: db.prepare(`SELECT s.*, u.callsign, u.full_name, u.email FROM schedule_signups s
+    JOIN users u ON u.id = s.user_id WHERE s.scheduled_net_id = ?`),
+  getSignupByNetAndPosition: db.prepare('SELECT * FROM schedule_signups WHERE scheduled_net_id = ? AND position = ?'),
+  getSignupById: db.prepare('SELECT * FROM schedule_signups WHERE id = ?'),
+  getSignupsByUser: db.prepare(`SELECT s.*, sn.net_date FROM schedule_signups s
+    JOIN scheduled_nets sn ON sn.id = s.scheduled_net_id WHERE s.user_id = ? ORDER BY sn.net_date`),
+  insertSignup: db.prepare('INSERT INTO schedule_signups (scheduled_net_id, position, user_id) VALUES (?, ?, ?)'),
+  deleteSignup: db.prepare('DELETE FROM schedule_signups WHERE id = ?'),
+  deleteSignupByNetAndPosition: db.prepare('DELETE FROM schedule_signups WHERE scheduled_net_id = ? AND position = ?'),
+
+  getSignupsNeedingReminder: db.prepare(`
+    SELECT s.*, sn.net_date, u.email, u.callsign, u.full_name FROM schedule_signups s
+    JOIN scheduled_nets sn ON sn.id = s.scheduled_net_id
+    JOIN users u ON u.id = s.user_id
+    WHERE sn.status = 'scheduled'
+  `),
+  markReminderSent: db.prepare('UPDATE schedule_signups SET reminder_24h_sent = ?, reminder_1h_sent = ? WHERE id = ?'),
+};
+
+module.exports = { db, queries, schedQueries, getFullCheckins };
