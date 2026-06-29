@@ -662,12 +662,16 @@ app.post('/api/presets/:id/positions', requireRole('netcontrol'), (req, res) => 
     if (!name) return res.status(400).json({ error: 'Name required' });
     const presetId = parseInt(req.params.id);
     if (isNaN(presetId)) return res.status(400).json({ error: 'Invalid preset id' });
-    const presetExists = queries.getPresets.all().some(p => p.id === presetId);
-    if (!presetExists) return res.status(404).json({ error: 'That preset no longer exists. Refresh the page and try again.' });
+    // Direct lookup by primary key - avoids any array-scan equality edge cases
+    const presetRow = db.prepare('SELECT id FROM presets WHERE id = ?').get(presetId);
+    if (!presetRow) return res.status(404).json({ error: 'That preset no longer exists. The list has been refreshed - please try again.' });
     const result = queries.insertPresetPosition.run(presetId, name.trim(), description || null, sort_order || 0);
     res.json({ id: result.lastInsertRowid, preset_id: presetId, name: name.trim(), description: description || null });
   } catch(e) {
     console.error('POST preset position error:', e.message);
+    if (e.message && e.message.includes('FOREIGN KEY constraint failed')) {
+      return res.status(404).json({ error: 'That preset no longer exists. The list has been refreshed - please try again.' });
+    }
     res.status(500).json({ error: 'Could not add position: ' + e.message });
   }
 });
@@ -1090,6 +1094,26 @@ async function checkMonthlyScheduleExtend() {
 // Check once an hour - cheap, and catches the 1st of the month reliably regardless of server uptime
 setInterval(checkMonthlyScheduleExtend, 60 * 60 * 1000);
 checkMonthlyScheduleExtend();
+
+// ─── TEMP DIAGNOSTIC - remove after debugging preset FK issue ─────────────────
+app.get('/api/debug/preset-positions', requireRole('netcontrol'), (req, res) => {
+  try {
+    const presetsTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='presets'").get();
+    const presetPositionsTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='preset_positions'").get();
+    const allPresets = db.prepare('SELECT id, name, typeof(id) as id_type FROM presets').all();
+    const fkCheck = db.prepare('PRAGMA foreign_key_check(preset_positions)').all();
+    const fkEnabled = db.prepare('PRAGMA foreign_keys').get();
+    res.json({
+      presets_table_sql: presetsTable ? presetsTable.sql : 'TABLE NOT FOUND',
+      preset_positions_table_sql: presetPositionsTable ? presetPositionsTable.sql : 'TABLE NOT FOUND',
+      all_presets: allPresets,
+      foreign_key_violations: fkCheck,
+      foreign_keys_pragma_enabled: fkEnabled
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
