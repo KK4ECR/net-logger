@@ -837,6 +837,50 @@ app.put('/api/preambles/:type', requireAuth, (req, res) => {
 // ─── SCHEDULING ────────────────────────────────────────────────────────────────
 const SCHED_POSITIONS = ['Net Control', 'Backup Net Control', 'Traffic Rep', 'Net Logger'];
 
+async function sendSignupConfirmation(user, dateStr, position) {
+  const dateDisplay = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  // Confirmation to the person who signed up
+  if (user.email) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+        <div style="background:#1D9E75;padding:20px 24px;border-radius:8px 8px 0 0">
+          <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
+          <p style="color:#e1f5ee;margin:4px 0 0;font-size:14px">Signup Confirmed</p>
+        </div>
+        <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+          <p style="color:#1a1a18;font-size:15px;margin:0 0 12px">Hi ${user.full_name || user.callsign},</p>
+          <p style="color:#1a1a18;font-size:15px;margin:0 0 16px">You're confirmed for the following net position:</p>
+          <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">
+            <tr><td style="padding:8px 12px;background:#E1F5EE;font-weight:bold;color:#085041;width:120px">Position</td><td style="padding:8px 12px;background:#fff;border:1px solid #e2e2de"><strong>${position}</strong></td></tr>
+            <tr><td style="padding:8px 12px;background:#E1F5EE;font-weight:bold;color:#085041">Date</td><td style="padding:8px 12px;background:#fff;border:1px solid #e2e2de">${dateDisplay}</td></tr>
+            <tr><td style="padding:8px 12px;background:#E1F5EE;font-weight:bold;color:#085041">Time</td><td style="padding:8px 12px;background:#fff;border:1px solid #e2e2de">7:30 PM</td></tr>
+          </table>
+          <p style="color:#6b6b68;font-size:13px;margin:0 0 16px">You'll get a reminder email 24 hours and 1 hour before the net. You can cancel your signup any time from the Schedule tab in the Net Logger.</p>
+          <a href="${APP_URL}" style="display:inline-block;background:#1D9E75;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px">View Schedule</a>
+        </div>
+      </div>`;
+    await sendEmail(user.email, 'Confirmed: ' + position + ' for ' + dateDisplay, html);
+  }
+
+  // Heads-up to all system admins
+  const adminEmails = queries.getSystemAdminEmails.all().map(r => r.email).filter(e => e && e !== user.email);
+  if (adminEmails.length) {
+    const adminHtml = `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+        <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0">
+          <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
+          <p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">New Schedule Signup</p>
+        </div>
+        <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+          <p style="color:#1a1a18;font-size:15px;margin:0 0 12px"><strong>${user.callsign}</strong>${user.full_name ? ' (' + user.full_name + ')' : ''} just signed up as <strong>${position}</strong> for <strong>${dateDisplay}</strong>.</p>
+          <a href="${APP_URL}" style="display:inline-block;background:#1D9E75;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;margin-top:8px">View Schedule</a>
+        </div>
+      </div>`;
+    adminEmails.forEach(email => sendEmail(email, 'Schedule signup: ' + user.callsign + ' - ' + position + ' on ' + dateDisplay, adminHtml));
+  }
+}
+
 function isHolidayBlocked(dateStr) {
   // Friday before through Monday after the given Sunday date
   const d = new Date(dateStr + 'T00:00:00');
@@ -904,7 +948,7 @@ app.put('/api/schedule/:date/status', requireRole('netcontrol'), (req, res) => {
 });
 
 // Sign up for a position
-app.post('/api/schedule/:date/signup', requireAuth, (req, res) => {
+app.post('/api/schedule/:date/signup', requireAuth, async (req, res) => {
   const { position } = req.body;
   if (!SCHED_POSITIONS.includes(position)) return res.status(400).json({ error: 'Invalid position' });
   let net = schedQueries.getScheduledNetByDate.get(req.params.date);
@@ -919,6 +963,8 @@ app.post('/api/schedule/:date/signup', requireAuth, (req, res) => {
   try {
     schedQueries.insertSignup.run(net.id, position, req.session.userId);
     res.json({ ok: true });
+    const user = queries.getUserById.get(req.session.userId);
+    if (user) sendSignupConfirmation(user, req.params.date, position).catch(e => console.error('Signup confirmation email error:', e.message));
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
