@@ -640,11 +640,42 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <!-- SCHEDULE PAGE -->
       <div class="page" id="page-schedule">
         <div class="panel">
-          <div class="panel-title"><i class="ti ti-calendar"></i> Net Schedule</div>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div class="panel-title" style="margin-bottom:0"><i class="ti ti-calendar"></i> Net Schedule</div>
+            <button class="btn" onclick="openPrintScheduleDialog()" style="font-size:12px;gap:6px">
+              <i class="ti ti-printer"></i> Print schedule
+            </button>
+          </div>
+          <p style="font-size:13px;color:var(--muted);margin:10px 0 1rem">
             Nets are held Sundays at 7:30 PM. Sign up for a position below. Nets are automatically skipped if a US federal holiday falls between the Friday before and the Monday after.
           </p>
           <div id="schedule-list"><div class="empty-state"><i class="ti ti-calendar"></i>Loading schedule...</div></div>
+        </div>
+      </div>
+
+      <!-- PRINT SCHEDULE RANGE MODAL -->
+      <div id="print-schedule-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closePrintScheduleDialog()">
+        <div class="modal-card" style="max-width:380px">
+          <div class="modal-header">
+            <div class="modal-title"><i class="ti ti-printer"></i> Print Net Schedule</div>
+            <button class="btn sm" onclick="closePrintScheduleDialog()"><i class="ti ti-x"></i></button>
+          </div>
+          <div class="modal-body">
+            <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">How far ahead should the printed schedule go? Starts from next Sunday.</p>
+            <div class="form-group">
+              <label>Print range</label>
+              <select id="print-sched-range" style="height:36px;border-radius:var(--radius);border:1px solid var(--border);padding:0 10px;width:100%;font-size:13px">
+                <option value="0.25">Next week only</option>
+                <option value="1">Next 1 month</option>
+                <option value="3">Next 3 months</option>
+                <option value="6" selected>All dates currently listed (up to 6 months)</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn" onclick="closePrintScheduleDialog()">Cancel</button>
+            <button class="btn primary" onclick="printSchedule()"><i class="ti ti-printer"></i> Print</button>
+          </div>
         </div>
       </div>
 
@@ -1915,6 +1946,107 @@ async function overrideNetStatus(date, status) {
     await api('PUT', '/schedule/' + date + '/status', { status, skip_reason: reason });
     loadSchedule();
   } catch(e) { alert(e.message); }
+}
+
+function openPrintScheduleDialog() {
+  document.getElementById('print-schedule-modal').classList.remove('hidden');
+}
+
+function closePrintScheduleDialog() {
+  document.getElementById('print-schedule-modal').classList.add('hidden');
+}
+
+async function printSchedule() {
+  const months = parseFloat(document.getElementById('print-sched-range').value);
+  closePrintScheduleDialog();
+  try {
+    const schedule = await api('GET', '/schedule?months=' + Math.min(months, 6));
+    renderSchedulePrintWindow(schedule, months);
+  } catch(e) { alert(e.message); }
+}
+
+function renderSchedulePrintWindow(schedule, monthsRequested) {
+  const rangeLabel = monthsRequested === 0.25 ? 'Next week' :
+    monthsRequested === 1 ? 'Next 1 month' :
+    monthsRequested === 3 ? 'Next 3 months' : 'All dates currently listed';
+  const today = new Date();
+  const todayStr = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  let filtered = schedule;
+  if (monthsRequested === 0.25) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() + 7);
+    filtered = schedule.filter(net => new Date(net.net_date + 'T00:00:00') <= cutoff);
+  }
+
+  const rows = filtered.map((net, i) => {
+    const d = new Date(net.net_date + 'T00:00:00');
+    const dateLabel = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    if (net.status === 'skipped') {
+      return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
+        <td style="padding:6px 8px;font-weight:600">${dateLabel}</td>
+        <td colspan="4" style="padding:6px 8px;color:#A32D2D;font-style:italic">Net skipped${net.skip_reason ? ' &mdash; ' + net.skip_reason : ''}</td>
+      </tr>`;
+    }
+    const posCell = pos => {
+      const filled = net.positions[pos];
+      return filled
+        ? `<span style="font-family:monospace;font-weight:700;color:#085041">${filled.callsign}</span>`
+        : `<span style="color:#999">Open</span>`;
+    };
+    return `<tr style="border-bottom:0.5px solid #eee;${i % 2 === 1 ? 'background:#f9f9f9' : ''}">
+      <td style="padding:6px 8px;font-weight:600">${dateLabel}</td>
+      <td style="padding:6px 8px">${posCell('Net Control')}</td>
+      <td style="padding:6px 8px">${posCell('Backup Net Control')}</td>
+      <td style="padding:6px 8px">${posCell('Traffic Rep')}</td>
+      <td style="padding:6px 8px">${posCell('Net Logger')}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Clay County ARES Net Schedule</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #1a1a18; background: #fff; padding: 24px 28px; }
+  @page { size: landscape; margin: 1.5cm; }
+  @media print { body { padding: 0; } .no-print { display: none !important; } }
+  .header { border-bottom: 2.5px solid #1D9E75; padding-bottom: 10px; margin-bottom: 16px; }
+  .net-title { font-size: 22px; font-weight: 700; color: #085041; margin-bottom: 4px; }
+  .net-meta { font-size: 12px; color: #555; margin-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 7px 8px; font-size: 10px; font-weight: 700; color: #555; border-bottom: 1.5px solid #ccc; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; background: #f4f4f0; }
+  td { vertical-align: top; }
+  .footer-row { margin-top: 14px; font-size: 10px; color: #666; border-top: 0.5px solid #ddd; padding-top: 8px; }
+  .print-btn { display: inline-block; margin-bottom: 16px; padding: 8px 16px; background: #1D9E75; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: Arial, sans-serif; }
+  .print-btn:hover { background: #085041; }
+</style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">&#128438; Print / Save as PDF</button>
+<div class="header">
+  <div class="net-title">Clay County ARES Net Schedule</div>
+  <div class="net-meta">Range: <strong>${rangeLabel}</strong> &nbsp;&middot;&nbsp; Generated ${todayStr} &nbsp;&middot;&nbsp; Nets held Sundays at 7:30 PM</div>
+</div>
+<table>
+  <thead><tr>
+    <th>Date</th><th>Net Control</th><th>Backup Net Control</th><th>Traffic Rep</th><th>Net Logger</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer-row">
+  Total dates listed: ${filtered.length} &nbsp;&middot;&nbsp;
+  Skipped: ${filtered.filter(n => n.status === 'skipped').length} &nbsp;&middot;&nbsp;
+  Scheduled: ${filtered.filter(n => n.status !== 'skipped').length}
+</div>
+<script>window.onload = function() { window.print(); };<\/script>
+</body></html>`;
+
+  const w = window.open('', '_blank', 'width=1100,height=800');
+  w.document.write(html);
+  w.document.close();
 }
 
 async function loadPreambles() {
