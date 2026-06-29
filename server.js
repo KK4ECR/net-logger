@@ -1343,14 +1343,19 @@ function assertValidPDF(buffer, context) {
   console.log('PDF generated OK:', context, '-', buffer.length, 'bytes, header:', buffer.toString('utf8', 0, 8));
 }
 
-async function renderHTMLToPDFBuffer(html, options = {}) {
+async function renderHTMLToPDFBuffer(html, options = {}, attempt = 1) {
   const browser = await getBrowser();
   const page = await browser.newPage();
   let pageCrashed = null;
   page.on('error', err => { pageCrashed = err; console.error('Page crashed during standard report render:', err.message); });
   try {
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    // 'load' is more appropriate than 'networkidle0' for static setContent() HTML with
+    // no external resources - networkidle0 can resolve before layout/paint fully settles,
+    // which has been observed to produce truncated PDF output from page.pdf().
+    await page.setContent(html, { waitUntil: 'load', timeout: 30000 });
     if (pageCrashed) throw new Error('Page crashed before PDF could be generated: ' + pageCrashed.message);
+    // Give Chromium's layout/paint pipeline a brief moment to fully settle before printing
+    await new Promise(r => setTimeout(r, 300));
     const buffer = await page.pdf({
       format: 'Letter',
       landscape: options.landscape !== false,
@@ -1360,6 +1365,16 @@ async function renderHTMLToPDFBuffer(html, options = {}) {
     if (pageCrashed) throw new Error('Page crashed during PDF generation: ' + pageCrashed.message);
     assertValidPDF(buffer, 'standard report');
     return buffer;
+  } catch(e) {
+    // page.pdf() can occasionally return truncated/invalid output with no thrown error
+    // and no crash event (a known category of Puppeteer/Chromium issue). Retry once with
+    // a fresh page before giving up, rather than failing the whole report on a fluke.
+    if (attempt < 2) {
+      console.warn('renderHTMLToPDFBuffer attempt ' + attempt + ' failed (' + e.message + '), retrying...');
+      await page.close().catch(() => {});
+      return renderHTMLToPDFBuffer(html, options, attempt + 1);
+    }
+    throw e;
   } finally {
     await page.close().catch(() => {});
   }
@@ -1367,7 +1382,7 @@ async function renderHTMLToPDFBuffer(html, options = {}) {
 
 // Renders a full app page (e.g. /ics309/:id) to PDF by authenticating Puppeteer with a
 // short-lived, single-use render token instead of trying to share session cookies.
-async function renderAppPageToPDFBuffer(pathAndQuery, userId) {
+async function renderAppPageToPDFBuffer(pathAndQuery, userId, attempt = 1) {
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString(); // 2 minutes
   renderTokenQueries.create.run(userId, token, expiresAt);
@@ -1392,6 +1407,13 @@ async function renderAppPageToPDFBuffer(pathAndQuery, userId) {
     if (pageCrashed) throw new Error('Page crashed during PDF generation: ' + pageCrashed.message);
     assertValidPDF(buffer, 'ICS 309 report');
     return buffer;
+  } catch(e) {
+    if (attempt < 2) {
+      console.warn('renderAppPageToPDFBuffer attempt ' + attempt + ' failed (' + e.message + '), retrying...');
+      await page.close().catch(() => {});
+      return renderAppPageToPDFBuffer(pathAndQuery, userId, attempt + 1);
+    }
+    throw e;
   } finally {
     await page.close().catch(() => {});
   }
