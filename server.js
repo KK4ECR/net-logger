@@ -1227,9 +1227,22 @@ async function getBrowser() {
   const launchOptions = {
     headless: 'new',
     args: [
-      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--disable-gpu', '--single-process'
-    ]
+      '--no-sandbox', '--disable-setuid-sandbox',
+      // --disable-dev-shm-usage forces Chromium to use disk instead of /dev/shm for
+      // shared memory, which is small/restricted in most containers and a very common
+      // cause of silent render failures (produces a short, invalid PDF buffer).
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      // NOTE: deliberately NOT using --single-process. It removes Chromium's normal
+      // process isolation, which makes OOM kills and crashes harder to detect cleanly
+      // and was producing truncated/invalid PDF buffers instead of a clear error.
+      '--no-zygote',
+      '--disable-background-networking',
+      '--disable-extensions',
+      '--js-flags=--max-old-space-size=256' // cap Chromium's own JS heap, conserve container memory
+    ],
+    // Generous timeout - slow first launch (cold container) shouldn't be mistaken for a crash
+    timeout: 60000
   };
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -1237,6 +1250,10 @@ async function getBrowser() {
   console.log('Launching Puppeteer with executablePath:', launchOptions.executablePath || '(Puppeteer default)');
   try {
     browserInstance = await puppeteer.launch(launchOptions);
+    browserInstance.on('disconnected', () => {
+      console.error('Puppeteer browser disconnected unexpectedly (likely crashed or was OOM-killed)');
+      browserInstance = null;
+    });
   } catch(e) {
     console.error('Puppeteer launch failed:', e.message);
     throw new Error('PDF generation is unavailable right now (browser engine failed to start): ' + e.message);
@@ -1329,18 +1346,22 @@ function assertValidPDF(buffer, context) {
 async function renderHTMLToPDFBuffer(html, options = {}) {
   const browser = await getBrowser();
   const page = await browser.newPage();
+  let pageCrashed = null;
+  page.on('error', err => { pageCrashed = err; console.error('Page crashed during standard report render:', err.message); });
   try {
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    if (pageCrashed) throw new Error('Page crashed before PDF could be generated: ' + pageCrashed.message);
     const buffer = await page.pdf({
       format: 'Letter',
       landscape: options.landscape !== false,
       printBackground: true,
       margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
     });
+    if (pageCrashed) throw new Error('Page crashed during PDF generation: ' + pageCrashed.message);
     assertValidPDF(buffer, 'standard report');
     return buffer;
   } finally {
-    await page.close();
+    await page.close().catch(() => {});
   }
 }
 
@@ -1353,10 +1374,13 @@ async function renderAppPageToPDFBuffer(pathAndQuery, userId) {
 
   const browser = await getBrowser();
   const page = await browser.newPage();
+  let pageCrashed = null;
+  page.on('error', err => { pageCrashed = err; console.error('Page crashed during ICS 309 render:', err.message); });
   try {
     const separator = pathAndQuery.includes('?') ? '&' : '?';
     const url = 'http://127.0.0.1:' + PORT + pathAndQuery + separator + 'renderToken=' + token;
     await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+    if (pageCrashed) throw new Error('Page crashed before PDF could be generated: ' + pageCrashed.message);
     // Give client-side fetch()/render logic a brief moment to finish painting tables
     await new Promise(r => setTimeout(r, 600));
     const buffer = await page.pdf({
@@ -1365,10 +1389,11 @@ async function renderAppPageToPDFBuffer(pathAndQuery, userId) {
       printBackground: true,
       margin: { top: '1.2cm', bottom: '1.2cm', left: '1cm', right: '1cm' }
     });
+    if (pageCrashed) throw new Error('Page crashed during PDF generation: ' + pageCrashed.message);
     assertValidPDF(buffer, 'ICS 309 report');
     return buffer;
   } finally {
-    await page.close();
+    await page.close().catch(() => {});
   }
 }
 
