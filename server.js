@@ -1095,26 +1095,6 @@ async function checkMonthlyScheduleExtend() {
 setInterval(checkMonthlyScheduleExtend, 60 * 60 * 1000);
 checkMonthlyScheduleExtend();
 
-// ─── TEMP DIAGNOSTIC - remove after debugging preset FK issue ─────────────────
-app.get('/api/debug/preset-positions', requireRole('netcontrol'), (req, res) => {
-  try {
-    const presetsTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='presets'").get();
-    const presetPositionsTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='preset_positions'").get();
-    const allPresets = db.prepare('SELECT id, name, typeof(id) as id_type FROM presets').all();
-    const fkCheck = db.prepare('PRAGMA foreign_key_check(preset_positions)').all();
-    const fkEnabled = db.prepare('PRAGMA foreign_keys').get();
-    res.json({
-      presets_table_sql: presetsTable ? presetsTable.sql : 'TABLE NOT FOUND',
-      preset_positions_table_sql: presetPositionsTable ? presetPositionsTable.sql : 'TABLE NOT FOUND',
-      all_presets: allPresets,
-      foreign_key_violations: fkCheck,
-      foreign_keys_pragma_enabled: fkEnabled
-    });
-  } catch(e) {
-    res.status(500).json({ error: e.message, stack: e.stack });
-  }
-});
-
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

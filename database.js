@@ -193,6 +193,36 @@ try { db.exec('ALTER TABLE issues ADD COLUMN priority TEXT DEFAULT \'normal\'');
 // Admin flag migration - separate from role, marks system-notification recipients
 try { db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0'); } catch(e) {}
 
+// ONE-TIME REPAIR: an early schema version created preset_positions referencing a
+// table named "position_presets" which never existed, breaking every insert with a
+// foreign key error. Detect that wrong reference and rebuild the table correctly,
+// preserving any existing rows.
+try {
+  const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='preset_positions'").get();
+  if (tableInfo && tableInfo.sql.includes('position_presets')) {
+    console.log('Repairing preset_positions table - found stale FK reference to position_presets');
+    db.exec(`
+      BEGIN TRANSACTION;
+      ALTER TABLE preset_positions RENAME TO preset_positions_old;
+      CREATE TABLE preset_positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        preset_id INTEGER NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT,
+        sort_order INTEGER DEFAULT 0
+      );
+      INSERT INTO preset_positions (id, preset_id, name, description, sort_order)
+        SELECT id, preset_id, name, description, sort_order FROM preset_positions_old
+        WHERE preset_id IN (SELECT id FROM presets);
+      DROP TABLE preset_positions_old;
+      COMMIT;
+    `);
+    console.log('preset_positions table repaired successfully');
+  }
+} catch(e) {
+  console.error('preset_positions repair migration failed:', e.message);
+}
+
 function bootstrapAdmin() {
   const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('netcontrol');
   if (!existing) {
