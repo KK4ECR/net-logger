@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
-const { db, queries, schedQueries, resetQueries, getFullCheckins } = require('./database');
+const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -322,6 +322,13 @@ app.put('/api/users/:id/role', requireRole('netcontrol'), (req, res) => {
   const validRoles = ['netcontrol', 'backup', 'observer'];
   if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' });
   queries.updateUserRole.run(role, req.params.id);
+  res.json({ ok: true });
+});
+
+// Admin flag is separate from role - marks recipients of system-level notifications
+app.put('/api/users/:id/admin-flag', requireRole('netcontrol'), (req, res) => {
+  const { is_admin } = req.body;
+  queries.updateUserAdminFlag.run(is_admin ? 1 : 0, req.params.id);
   res.json({ ok: true });
 });
 
@@ -981,6 +988,74 @@ async function checkAndSendReminders() {
 }
 setInterval(checkAndSendReminders, 5 * 60 * 1000);
 checkAndSendReminders();
+
+// ─── MONTHLY SCHEDULE AUTO-EXTEND ──────────────────────────────────────────────
+// Ensures the schedule window keeps rolling forward. On the 1st of each month,
+// extends the populated schedule by one additional month and emails admins.
+function currentMonthKey() {
+  const now = new Date();
+  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+}
+
+async function checkMonthlyScheduleExtend() {
+  try {
+    const now = new Date();
+    if (now.getDate() !== 1) return; // only run on the 1st
+
+    const key = 'schedule_last_extended_month';
+    const lastRun = settingsQueries.get.get(key);
+    const thisMonth = currentMonthKey();
+    if (lastRun && lastRun.value === thisMonth) return; // already extended this month
+
+    // Populate one additional month beyond the current 6-month window (i.e. month 7)
+    const sundays = getUpcomingSundays(7).filter(d => {
+      const monthsOut = (new Date(d) - now) / (1000 * 60 * 60 * 24 * 30);
+      return monthsOut > 5.5; // only the newly-extended slice
+    });
+
+    const newlyAdded = [];
+    sundays.forEach(dateStr => {
+      const existing = schedQueries.getScheduledNetByDate.get(dateStr);
+      if (!existing) {
+        const holiday = isHolidayBlocked(dateStr);
+        schedQueries.upsertScheduledNet.run(dateStr, holiday ? 'skipped' : 'scheduled');
+        if (holiday) schedQueries.setNetStatus.run('skipped', holiday.name, 0, dateStr);
+        newlyAdded.push({ date: dateStr, skipped: !!holiday, reason: holiday ? holiday.name : null });
+      }
+    });
+
+    settingsQueries.set.run(key, thisMonth);
+
+    if (newlyAdded.length) {
+      const adminEmails = queries.getSystemAdminEmails.all().map(r => r.email);
+      if (adminEmails.length) {
+        const rows = newlyAdded.map(n => {
+          const d = new Date(n.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+          return '<li>' + d + (n.skipped ? ' — skipped (' + n.reason + ')' : '') + '</li>';
+        }).join('');
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+            <div style="background:#085041;padding:20px 24px;border-radius:8px 8px 0 0">
+              <h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1>
+              <p style="color:#a8ddc9;margin:4px 0 0;font-size:14px">Schedule Auto-Extended</p>
+            </div>
+            <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+              <p style="color:#1a1a18;font-size:15px;margin:0 0 12px">The net schedule has automatically been extended by one month. The following new dates were added:</p>
+              <ul style="color:#1a1a18;font-size:15px">${rows}</ul>
+              <a href="${APP_URL}" style="display:inline-block;background:#1D9E75;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;margin-top:8px">View Schedule</a>
+            </div>
+          </div>`;
+        adminEmails.forEach(email => sendEmail(email, 'Clay ARES Net Logger — Schedule extended with ' + newlyAdded.length + ' new date(s)', html));
+      }
+      console.log('Monthly schedule extend: added', newlyAdded.length, 'new date(s)');
+    }
+  } catch(e) {
+    console.error('Monthly schedule extend error:', e.message);
+  }
+}
+// Check once an hour - cheap, and catches the 1st of the month reliably regardless of server uptime
+setInterval(checkMonthlyScheduleExtend, 60 * 60 * 1000);
+checkMonthlyScheduleExtend();
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

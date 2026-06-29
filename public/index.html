@@ -1296,12 +1296,15 @@ async function loadUsers() {
     const el = document.getElementById('user-table-wrap');
     if (!users.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-users"></i>No users yet</div>'; return; }
     el.innerHTML = `<div style="overflow-x:auto"><table class="admin-table">
-      <thead><tr><th>Callsign</th><th>Name</th><th>Email</th><th>Role</th><th>Last login</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Callsign</th><th>Name</th><th>Email</th><th>Role</th><th>Admin</th><th>Last login</th><th>Actions</th></tr></thead>
       <tbody>${users.map(u => `<tr>
         <td style="font-family:monospace;font-weight:700">${u.callsign}</td>
         <td style="font-size:13px">${u.full_name || ''}</td>
         <td style="font-size:12px;color:var(--muted)">${u.email || ''}</td>
         <td><span class="role-badge role-${u.role}">${ROLES[u.role] || u.role}</span></td>
+        <td style="text-align:center">
+          <input type="checkbox" ${u.is_admin ? 'checked' : ''} onchange="toggleAdminFlag(${u.id}, this.checked)" title="System admin - receives schedule and account-request notifications" />
+        </td>
         <td style="font-size:12px;color:var(--muted)">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="resetPassword(${u.id},'${u.callsign}')"><i class="ti ti-key"></i> Reset pw</button>
@@ -1311,6 +1314,15 @@ async function loadUsers() {
       </tr>`).join('')}</tbody>
     </table></div>`;
   } catch (e) {}
+}
+
+async function toggleAdminFlag(id, isChecked) {
+  try {
+    await api('PUT', '/users/' + id + '/admin-flag', { is_admin: isChecked });
+  } catch(e) {
+    alert(e.message);
+    loadUsers();
+  }
 }
 
 async function loadPendingRequests() {

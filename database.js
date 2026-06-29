@@ -147,6 +147,11 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS holidays (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     holiday_date TEXT UNIQUE NOT NULL,
@@ -185,6 +190,9 @@ try { db.exec('ALTER TABLE issues ADD COLUMN resolved_by INTEGER'); } catch(e) {
 try { db.exec('ALTER TABLE issues ADD COLUMN resolved_at DATETIME'); } catch(e) {}
 try { db.exec('ALTER TABLE issues ADD COLUMN priority TEXT DEFAULT \'normal\''); } catch(e) {}
 
+// Admin flag migration - separate from role, marks system-notification recipients
+try { db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0'); } catch(e) {}
+
 function bootstrapAdmin() {
   const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('netcontrol');
   if (!existing) {
@@ -195,6 +203,11 @@ function bootstrapAdmin() {
 }
 
 bootstrapAdmin();
+
+// Ensure KK4ECR is flagged as admin
+try {
+  db.prepare("UPDATE users SET is_admin = 1 WHERE callsign = 'KK4ECR' COLLATE NOCASE").run();
+} catch(e) {}
 
 // Bootstrap default preambles
 const preambleDefaults = [
@@ -431,7 +444,7 @@ const upsertPreamble = db.prepare(`INSERT INTO preambles (type, title, content, 
 preambleDefaults.forEach(p => upsertPreamble.run(p.type, p.title, p.content));
 
 const queries = {
-  getAllUsers: db.prepare('SELECT id, callsign, role, email, full_name, last_login FROM users ORDER BY callsign'),
+  getAllUsers: db.prepare('SELECT id, callsign, role, email, full_name, last_login, is_admin FROM users ORDER BY callsign'),
   getUserByCallsign: db.prepare('SELECT * FROM users WHERE callsign = ? COLLATE NOCASE'),
   getUserById: db.prepare('SELECT id, callsign, role, email, full_name FROM users WHERE id = ?'),
   createUser: db.prepare('INSERT INTO users (callsign, password_hash, role, email, full_name) VALUES (?, ?, ?, ?, ?)'),
@@ -441,6 +454,8 @@ const queries = {
   deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
   updateLastLogin: db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?'),
   getAdminEmails: db.prepare("SELECT email FROM users WHERE role = 'netcontrol' AND email IS NOT NULL AND email != ''"),
+  getSystemAdminEmails: db.prepare("SELECT email FROM users WHERE is_admin = 1 AND email IS NOT NULL AND email != ''"),
+  updateUserAdminFlag: db.prepare('UPDATE users SET is_admin = ? WHERE id = ?'),
 
   createRequest: db.prepare('INSERT INTO pending_requests (callsign, full_name, email, requested_role, password_hash) VALUES (?, ?, ?, ?, ?)'),
   getPendingRequests: db.prepare("SELECT * FROM pending_requests WHERE status = 'pending' ORDER BY requested_at ASC"),
@@ -556,6 +571,11 @@ const resetQueries = {
   invalidateUserResets: db.prepare("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0"),
 };
 
+const settingsQueries = {
+  get: db.prepare('SELECT value FROM app_settings WHERE key = ?'),
+  set: db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'),
+};
+
 const schedQueries = {
   getHolidaysInRange: db.prepare('SELECT * FROM holidays WHERE holiday_date BETWEEN ? AND ? ORDER BY holiday_date'),
   getAllHolidays: db.prepare('SELECT * FROM holidays ORDER BY holiday_date'),
@@ -586,4 +606,4 @@ const schedQueries = {
   markReminderSent: db.prepare('UPDATE schedule_signups SET reminder_24h_sent = ?, reminder_1h_sent = ? WHERE id = ?'),
 };
 
-module.exports = { db, queries, schedQueries, resetQueries, getFullCheckins };
+module.exports = { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins };
