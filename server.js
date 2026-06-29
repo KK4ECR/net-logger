@@ -596,19 +596,34 @@ app.post('/api/checkin/:id/announcement-given', requireRole('netcontrol', 'backu
 
 // ─── TACTICAL POSITIONS ───────────────────────────────────────────────────────
 app.get('/api/positions', requireAuth, (req, res) => {
-  res.json(queries.getPositions.all());
+  try {
+    res.json(queries.getPositions.all());
+  } catch(e) {
+    console.error('GET positions error:', e.message);
+    res.status(500).json({ error: 'Could not load positions: ' + e.message });
+  }
 });
 
 app.post('/api/positions', requireRole('netcontrol'), (req, res) => {
-  const { name, description, sort_order } = req.body;
-  if (!name) return res.status(400).json({ error: 'Name required' });
-  const result = queries.insertPosition.run(name.trim(), description || null, sort_order || 0);
-  res.json({ id: result.lastInsertRowid, name: name.trim(), description: description || null, sort_order: sort_order || 0 });
+  try {
+    const { name, description, sort_order } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name required' });
+    const result = queries.insertPosition.run(name.trim(), description || null, sort_order || 0);
+    res.json({ id: result.lastInsertRowid, name: name.trim(), description: description || null, sort_order: sort_order || 0 });
+  } catch(e) {
+    console.error('POST position error:', e.message);
+    res.status(500).json({ error: 'Could not add position: ' + e.message });
+  }
 });
 
 app.delete('/api/positions/:id', requireRole('netcontrol'), (req, res) => {
-  queries.deletePosition.run(req.params.id);
-  res.json({ ok: true });
+  try {
+    queries.deletePosition.run(req.params.id);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('DELETE position error:', e.message);
+    res.status(500).json({ error: 'Could not delete position: ' + e.message });
+  }
 });
 
 // ─── POSITION PRESETS ─────────────────────────────────────────────────────────
@@ -633,19 +648,38 @@ app.delete('/api/presets/:id', requireRole('netcontrol'), (req, res) => {
 });
 
 app.get('/api/presets/:id/positions', requireAuth, (req, res) => {
-  res.json(queries.getPresetPositions.all(req.params.id));
+  try {
+    res.json(queries.getPresetPositions.all(req.params.id));
+  } catch(e) {
+    console.error('GET preset positions error:', e.message);
+    res.status(500).json({ error: 'Could not load positions: ' + e.message });
+  }
 });
 
 app.post('/api/presets/:id/positions', requireRole('netcontrol'), (req, res) => {
-  const { name, description, sort_order } = req.body;
-  if (!name) return res.status(400).json({ error: 'Name required' });
-  const result = queries.insertPresetPosition.run(req.params.id, name.trim(), description || null, sort_order || 0);
-  res.json({ id: result.lastInsertRowid, preset_id: parseInt(req.params.id), name: name.trim(), description: description || null });
+  try {
+    const { name, description, sort_order } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name required' });
+    const presetId = parseInt(req.params.id);
+    if (isNaN(presetId)) return res.status(400).json({ error: 'Invalid preset id' });
+    const presetExists = queries.getPresets.all().some(p => p.id === presetId);
+    if (!presetExists) return res.status(404).json({ error: 'That preset no longer exists. Refresh the page and try again.' });
+    const result = queries.insertPresetPosition.run(presetId, name.trim(), description || null, sort_order || 0);
+    res.json({ id: result.lastInsertRowid, preset_id: presetId, name: name.trim(), description: description || null });
+  } catch(e) {
+    console.error('POST preset position error:', e.message);
+    res.status(500).json({ error: 'Could not add position: ' + e.message });
+  }
 });
 
 app.delete('/api/presets/:id/positions/:posId', requireRole('netcontrol'), (req, res) => {
-  queries.deletePresetPosition.run(req.params.posId);
-  res.json({ ok: true });
+  try {
+    queries.deletePresetPosition.run(req.params.posId);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('DELETE preset position error:', e.message);
+    res.status(500).json({ error: 'Could not delete position: ' + e.message });
+  }
 });
 
 // ─── ISSUES ───────────────────────────────────────────────────────────────────
