@@ -167,6 +167,13 @@ db.exec(`
     name TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS user_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    position TEXT NOT NULL,
+    UNIQUE(user_id, position)
+  );
+
   CREATE TABLE IF NOT EXISTS preambles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT UNIQUE NOT NULL,
@@ -544,7 +551,17 @@ const queries = {
   getAllPreambles: db.prepare('SELECT * FROM preambles ORDER BY id'),
   getPreambleByType: db.prepare('SELECT * FROM preambles WHERE type = ?'),
   updatePreamble: db.prepare('UPDATE preambles SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE type = ?'),
+
+  getPositionsByUser: db.prepare('SELECT position FROM user_positions WHERE user_id = ? ORDER BY position'),
+  getAllUserPositions: db.prepare('SELECT user_id, position FROM user_positions'),
+  insertUserPosition: db.prepare('INSERT OR IGNORE INTO user_positions (user_id, position) VALUES (?, ?)'),
+  deleteUserPositionsForUser: db.prepare('DELETE FROM user_positions WHERE user_id = ?'),
 };
+
+const setUserPositions = db.transaction((userId, positions) => {
+  queries.deleteUserPositionsForUser.run(userId);
+  positions.forEach(p => queries.insertUserPosition.run(userId, p));
+});
 
 function getFullCheckins(sessionId) {
   const checkins = queries.getCheckins.all(sessionId);
@@ -652,4 +669,4 @@ const schedQueries = {
   markReminderSent: db.prepare('UPDATE schedule_signups SET reminder_24h_sent = ?, reminder_1h_sent = ? WHERE id = ?'),
 };
 
-module.exports = { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins };
+module.exports = { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins, setUserPositions };

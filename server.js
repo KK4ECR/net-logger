@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
-const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins } = require('./database');
+const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins, setUserPositions } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +38,19 @@ function requireRole(...roles) {
     next();
   };
 }
+
+// App-admin access (user management, account requests) - granted to the netcontrol
+// role OR anyone flagged is_admin. This is separate from net-day operational
+// permissions (open/close net, checkins, etc.), which stay gated on role alone.
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+  if (req.session.role !== 'netcontrol' && !req.session.isAdmin) return res.status(403).json({ error: 'Insufficient permissions' });
+  next();
+}
+
+// Net-duty positions a member can be approved for - used to restrict schedule
+// signups and to show quick-assign badges at check-in.
+const SCHED_POSITIONS = ['Net Control', 'Backup Net Control', 'Traffic Rep', 'Net Logger'];
 
 // ─── EMAIL ───────────────────────────────────────────────────────────────────
 const ROLES_DISPLAY = { netcontrol: 'Net Control', backup: 'Backup Net Control', observer: 'Observer' };
@@ -249,7 +262,9 @@ app.post('/api/auth/login', (req, res) => {
   req.session.userId = user.id;
   req.session.callsign = user.callsign;
   req.session.role = user.role;
-  res.json({ callsign: user.callsign, role: user.role });
+  req.session.isAdmin = !!user.is_admin;
+  const positions = queries.getPositionsByUser.all(user.id).map(p => p.position);
+  res.json({ callsign: user.callsign, role: user.role, isAdmin: !!user.is_admin, positions });
 });
 
 // ─── PASSWORD RESET ────────────────────────────────────────────────────────────
@@ -310,15 +325,39 @@ app.post('/api/auth/logout', (req, res) => { req.session.destroy(); res.json({ o
 
 app.get('/api/auth/me', (req, res) => {
   if (!req.session.userId) return res.json({ authenticated: false });
-  res.json({ authenticated: true, callsign: req.session.callsign, role: req.session.role });
+  const positions = queries.getPositionsByUser.all(req.session.userId).map(p => p.position);
+  res.json({ authenticated: true, callsign: req.session.callsign, role: req.session.role, isAdmin: !!req.session.isAdmin, positions });
 });
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
-app.get('/api/users', requireRole('netcontrol'), (req, res) => {
-  res.json(queries.getAllUsers.all());
+app.get('/api/users', requireAdmin, (req, res) => {
+  const users = queries.getAllUsers.all();
+  const byUser = {};
+  queries.getAllUserPositions.all().forEach(p => { (byUser[p.user_id] = byUser[p.user_id] || []).push(p.position); });
+  res.json(users.map(u => ({ ...u, positions: byUser[u.id] || [] })));
 });
 
-app.post('/api/users', requireRole('netcontrol'), (req, res) => {
+// Positions approved for each user, keyed by callsign - used by the check-in
+// screen to show quick-assign badges for the operator being checked in.
+app.get('/api/users/positions', requireRole('netcontrol', 'backup'), (req, res) => {
+  const users = queries.getAllUsers.all();
+  const byUser = {};
+  queries.getAllUserPositions.all().forEach(p => { (byUser[p.user_id] = byUser[p.user_id] || []).push(p.position); });
+  const map = {};
+  users.forEach(u => { if (byUser[u.id] && byUser[u.id].length) map[u.callsign.toUpperCase()] = byUser[u.id]; });
+  res.json(map);
+});
+
+app.put('/api/users/:id/positions', requireAdmin, (req, res) => {
+  const { positions } = req.body;
+  if (!Array.isArray(positions)) return res.status(400).json({ error: 'positions must be an array' });
+  const invalid = positions.filter(p => !SCHED_POSITIONS.includes(p));
+  if (invalid.length) return res.status(400).json({ error: 'Invalid position: ' + invalid.join(', ') });
+  setUserPositions(req.params.id, positions);
+  res.json({ ok: true });
+});
+
+app.post('/api/users', requireAdmin, (req, res) => {
   const { callsign, password, role, email, full_name } = req.body;
   if (!callsign || !password || !role) return res.status(400).json({ error: 'Callsign, password, and role required' });
   const validRoles = ['netcontrol', 'backup', 'observer'];
@@ -333,14 +372,14 @@ app.post('/api/users', requireRole('netcontrol'), (req, res) => {
   }
 });
 
-app.put('/api/users/:id/password', requireRole('netcontrol'), (req, res) => {
+app.put('/api/users/:id/password', requireAdmin, (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Password required' });
   queries.updateUserPassword.run(bcrypt.hashSync(password, 10), req.params.id);
   res.json({ ok: true });
 });
 
-app.put('/api/users/:id/role', requireRole('netcontrol'), (req, res) => {
+app.put('/api/users/:id/role', requireAdmin, (req, res) => {
   const { role } = req.body;
   const validRoles = ['netcontrol', 'backup', 'observer'];
   if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' });
@@ -348,20 +387,21 @@ app.put('/api/users/:id/role', requireRole('netcontrol'), (req, res) => {
   res.json({ ok: true });
 });
 
-// Admin flag is separate from role - marks recipients of system-level notifications
-app.put('/api/users/:id/admin-flag', requireRole('netcontrol'), (req, res) => {
+// Admin flag is separate from role - marks recipients of system-level notifications,
+// and (see requireAdmin) also grants access to this Users/admin panel itself.
+app.put('/api/users/:id/admin-flag', requireAdmin, (req, res) => {
   const { is_admin } = req.body;
   queries.updateUserAdminFlag.run(is_admin ? 1 : 0, req.params.id);
   res.json({ ok: true });
 });
 
-app.put('/api/users/:id/email', requireRole('netcontrol'), (req, res) => {
+app.put('/api/users/:id/email', requireAdmin, (req, res) => {
   const { email } = req.body;
   queries.updateUserEmail.run(email || null, req.params.id);
   res.json({ ok: true });
 });
 
-app.delete('/api/users/:id', requireRole('netcontrol'), (req, res) => {
+app.delete('/api/users/:id', requireAdmin, (req, res) => {
   if (parseInt(req.params.id) === req.session.userId)
     return res.status(400).json({ error: 'Cannot delete your own account' });
   queries.deleteUser.run(req.params.id);
@@ -369,11 +409,11 @@ app.delete('/api/users/:id', requireRole('netcontrol'), (req, res) => {
 });
 
 // ─── PENDING REQUESTS ─────────────────────────────────────────────────────────
-app.get('/api/admin/requests', requireRole('netcontrol'), (req, res) => {
+app.get('/api/admin/requests', requireAdmin, (req, res) => {
   res.json(queries.getPendingRequests.all());
 });
 
-app.post('/api/admin/requests/:id/approve', requireRole('netcontrol'), (req, res) => {
+app.post('/api/admin/requests/:id/approve', requireAdmin, (req, res) => {
   const request = queries.getRequestById.get(req.params.id);
   if (!request) return res.status(404).json({ error: 'Request not found' });
   if (request.status !== 'pending') return res.status(409).json({ error: 'Request already processed' });
@@ -392,7 +432,7 @@ app.post('/api/admin/requests/:id/approve', requireRole('netcontrol'), (req, res
   }
 });
 
-app.post('/api/admin/requests/:id/deny', requireRole('netcontrol'), (req, res) => {
+app.post('/api/admin/requests/:id/deny', requireAdmin, (req, res) => {
   const request = queries.getRequestById.get(req.params.id);
   if (!request) return res.status(404).json({ error: 'Request not found' });
   if (request.status !== 'pending') return res.status(409).json({ error: 'Request already processed' });
@@ -876,7 +916,6 @@ app.put('/api/preambles/:type', requireAuth, (req, res) => {
 });
 
 // ─── SCHEDULING ────────────────────────────────────────────────────────────────
-const SCHED_POSITIONS = ['Net Control', 'Backup Net Control', 'Traffic Rep', 'Net Logger'];
 
 async function sendSignupConfirmation(user, dateStr, position) {
   const dateDisplay = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
@@ -992,6 +1031,10 @@ app.put('/api/schedule/:date/status', requireRole('netcontrol'), (req, res) => {
 app.post('/api/schedule/:date/signup', requireAuth, async (req, res) => {
   const { position } = req.body;
   if (!SCHED_POSITIONS.includes(position)) return res.status(400).json({ error: 'Invalid position' });
+  if (req.session.role !== 'netcontrol') {
+    const approved = queries.getPositionsByUser.all(req.session.userId).map(p => p.position);
+    if (!approved.includes(position)) return res.status(403).json({ error: 'You are not approved for the ' + position + ' position' });
+  }
   let net = schedQueries.getScheduledNetByDate.get(req.params.date);
   if (!net) {
     const holiday = isHolidayBlocked(req.params.date);

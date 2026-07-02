@@ -451,6 +451,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
               <label>Callsign</label>
               <input type="text" id="ci-call" placeholder="W4XYZ" oninput="this.value=this.value.toUpperCase();onCallsignInput(this)" autocomplete="off" style="font-family:monospace;font-weight:700;letter-spacing:.04em" />
               <div class="qrz-hint" id="qrz-hint"></div>
+              <div id="ci-position-badges" style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
             </div>
             <div class="form-group"><label>Name (QRZ)</label><input type="text" id="ci-name" placeholder="Auto-fill" readonly style="background:var(--bg)" /></div>
             <div class="form-group"><label>License class</label><input type="text" id="ci-class" placeholder="Auto-fill" readonly style="background:var(--bg)" /></div>
@@ -734,7 +735,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
 <script>
 const ROLES = { netcontrol: 'Net Control', backup: 'Backup NC', observer: 'Observer' };
-let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null };
+let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {} };
 let msgCount = 0;
 
 async function api(method, path, body) {
@@ -814,7 +815,7 @@ async function submitForgotPassword() {
 async function doLogout() {
   await api('POST', '/auth/logout');
   clearInterval(appState.pollTimer);
-  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null };
+  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {} };
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('login-password').value = '';
@@ -829,7 +830,7 @@ function showApp() {
   roleBadge.className = 'role-badge role-' + appState.user.role;
   applyRoleUI();
   loadCurrentSession();
-  if (appState.user.role === 'netcontrol') checkPendingBadge();
+  if (appState.user.role === 'netcontrol' || appState.user.isAdmin) checkPendingBadge();
   updateCloseButtonState();
   updateCloseButtonState();
   document.getElementById('net-date').value = new Date().toISOString().split('T')[0];
@@ -839,6 +840,7 @@ function showApp() {
   sendHeartbeat();
   setInterval(sendHeartbeat, 30000);
   loadPositions();
+  if (appState.user.role !== 'observer') loadUserPositions();
   updateOfflineUI();
 }
 
@@ -853,7 +855,7 @@ function applyRoleUI() {
       if (b.id !== 'btn-open-net') b.disabled = true;
     });
   }
-  if (!isNC) document.getElementById('nav-admin').style.display = 'none';
+  if (!isNC && !appState.user.isAdmin) document.getElementById('nav-admin').style.display = 'none';
 }
 
 async function loadCurrentSession() {
@@ -893,7 +895,7 @@ async function pollSession() {
       renderLog();
       updateStats();
       if (mapInitialized && document.getElementById('page-map').classList.contains('active')) renderMap();
-      if (appState.user && appState.user.role === 'netcontrol') checkPendingBadge();
+      if (appState.user && (appState.user.role === 'netcontrol' || appState.user.isAdmin)) checkPendingBadge();
       updateCloseButtonState();
       // Refresh issues badge silently
       try {
@@ -1089,6 +1091,7 @@ function onCallsignInput(el) {
   document.getElementById('w3w-display').classList.add('hidden');
   const hint = document.getElementById('qrz-hint');
   el._qrzInfo = null;
+  renderApprovedPositionBadges(call);
   if (call.length < 3) { hint.textContent = ''; return; }
   hint.className = 'qrz-hint'; hint.textContent = 'Looking up...';
   qrzTimer = setTimeout(async () => {
@@ -1221,6 +1224,7 @@ function clearCI() {
   document.getElementById('ci-tactical').value = '';
   document.getElementById('ci-location').value = '';
   document.getElementById('qrz-hint').textContent = '';
+  document.getElementById('ci-position-badges').innerHTML = '';
   document.getElementById('usng-display').classList.add('hidden');
   document.getElementById('w3w-display').classList.add('hidden');
   msgCount = 0;
@@ -1388,20 +1392,27 @@ function exportPDF() {
   w.document.close();
 }
 
+let usersCache = [];
 async function loadUsers() {
   try {
     const users = await api('GET', '/users');
+    usersCache = users;
     const el = document.getElementById('user-table-wrap');
     if (!users.length) { el.innerHTML = '<div class="empty-state"><i class="ti ti-users"></i>No users yet</div>'; return; }
     el.innerHTML = `<div style="overflow-x:auto"><table class="admin-table">
-      <thead><tr><th>Callsign</th><th>Name</th><th>Email</th><th>Role</th><th>Admin</th><th>Last login</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Callsign</th><th>Name</th><th>Email</th><th>Role</th><th>Positions</th><th>Admin</th><th>Last login</th><th>Actions</th></tr></thead>
       <tbody>${users.map(u => `<tr>
         <td style="font-family:monospace;font-weight:700">${u.callsign}</td>
         <td style="font-size:13px">${u.full_name || ''}</td>
         <td style="font-size:12px;color:var(--muted)">${u.email || ''}</td>
         <td><span class="role-badge role-${u.role}">${ROLES[u.role] || u.role}</span></td>
+        <td style="font-size:11px">
+          ${SCHED_POSITIONS.map(pos => `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;white-space:nowrap;cursor:pointer">
+            <input type="checkbox" ${(u.positions || []).includes(pos) ? 'checked' : ''} onchange="toggleUserPosition(${u.id}, '${pos}', this.checked)" /> ${pos}
+          </label>`).join('')}
+        </td>
         <td style="text-align:center">
-          <input type="checkbox" ${u.is_admin ? 'checked' : ''} onchange="toggleAdminFlag(${u.id}, this.checked)" title="System admin - receives schedule and account-request notifications" />
+          <input type="checkbox" ${u.is_admin ? 'checked' : ''} onchange="toggleAdminFlag(${u.id}, this.checked)" title="App Admin - can manage users and account requests, and receives schedule/account-request notifications" />
         </td>
         <td style="font-size:12px;color:var(--muted)">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1417,6 +1428,21 @@ async function loadUsers() {
 async function toggleAdminFlag(id, isChecked) {
   try {
     await api('PUT', '/users/' + id + '/admin-flag', { is_admin: isChecked });
+  } catch(e) {
+    alert(e.message);
+    loadUsers();
+  }
+}
+
+async function toggleUserPosition(id, position, isChecked) {
+  const u = usersCache.find(x => x.id === id);
+  if (!u) return;
+  const set = new Set(u.positions || []);
+  if (isChecked) set.add(position); else set.delete(position);
+  const positions = Array.from(set);
+  try {
+    await api('PUT', '/users/' + id + '/positions', { positions });
+    u.positions = positions;
   } catch(e) {
     alert(e.message);
     loadUsers();
@@ -1539,6 +1565,23 @@ async function loadPositions() {
     if (!dl) return;
     dl.innerHTML = positions.map(p => `<option value="${p.name}">${p.description ? p.name + ' — ' + p.description : p.name}</option>`).join('');
   } catch(e) {}
+}
+
+// Approved net-duty positions per user, keyed by callsign - powers the quick-assign
+// badges shown when Net Control checks in a registered member.
+async function loadUserPositions() {
+  try { appState.userPositionsByCallsign = await api('GET', '/users/positions'); }
+  catch(e) { appState.userPositionsByCallsign = {}; }
+}
+
+function renderApprovedPositionBadges(call) {
+  const el = document.getElementById('ci-position-badges');
+  if (!el) return;
+  const positions = (appState.userPositionsByCallsign && appState.userPositionsByCallsign[call.toUpperCase()]) || [];
+  if (!positions.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<span style="font-size:10px;color:var(--muted)">Approved:</span> ' + positions.map(p =>
+    `<button type="button" class="btn sm" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('ci-tactical').value='${p.replace(/'/g, "\\'")}'" title="Set as tactical call for this check-in">${p}</button>`
+  ).join('');
 }
 
 // ─── ISSUES ───────────────────────────────────────────────────────────────────
@@ -1898,6 +1941,7 @@ async function loadSchedule() {
           </div>
         </div>`;
       }
+      const myPositions = (appState.user && appState.user.positions) || [];
       const posHtml = SCHED_POSITIONS.map(pos => {
         const filled = net.positions[pos];
         const isMe = filled && appState.user && filled.user_id === appState.user.id;
@@ -1910,9 +1954,12 @@ async function loadSchedule() {
             </div>
           </div>`;
         }
+        const canSignUp = isAdmin || myPositions.includes(pos);
         return `<div class="sched-pos">
           <div class="sched-pos-name">${pos}</div>
-          <button class="sched-pos-empty-btn" onclick="signUpFor('${net.net_date}','${pos}')">+ Sign up</button>
+          ${canSignUp
+            ? `<button class="sched-pos-empty-btn" onclick="signUpFor('${net.net_date}','${pos}')">+ Sign up</button>`
+            : `<span style="font-size:11px;color:var(--muted)" title="You are not approved for this position">Not approved</span>`}
         </div>`;
       }).join('');
       return `<div class="sched-row">
