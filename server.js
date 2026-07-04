@@ -665,6 +665,28 @@ app.get('/api/status-board', requireAuth, (req, res) => {
   });
 });
 
+// ─── CHAT ──────────────────────────────────────────────────────────────────────
+// Chat is scoped to the currently open net session - it opens and closes with the net.
+app.get('/api/chat', requireAuth, (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.json({ active: false, messages: [] });
+  const since = parseInt(req.query.since) || 0;
+  const messages = since
+    ? queries.getChatMessagesSince.all(session.id, since)
+    : queries.getChatMessages.all(session.id);
+  res.json({ active: true, session_id: session.id, messages });
+});
+
+app.post('/api/chat', requireAuth, (req, res) => {
+  const session = queries.getOpenSession.get();
+  if (!session) return res.status(409).json({ error: 'No open net session' });
+  const message = (req.body.message || '').trim();
+  if (!message) return res.status(400).json({ error: 'Message required' });
+  if (message.length > 500) return res.status(400).json({ error: 'Message too long (500 characters max)' });
+  const result = queries.insertChatMessage.run(session.id, req.session.userId, req.session.callsign, message);
+  res.json(queries.getChatMessageById.get(result.lastInsertRowid));
+});
+
 // Mark announcement as given
 app.post('/api/checkin/:id/announcement-given', requireRole('netcontrol', 'backup'), (req, res) => {
   const session = queries.getOpenSession.get();

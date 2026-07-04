@@ -167,6 +167,15 @@ db.exec(`
     name TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES net_sessions(id),
+    user_id INTEGER REFERENCES users(id),
+    callsign TEXT NOT NULL,
+    message TEXT NOT NULL,
+    posted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS user_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -551,6 +560,11 @@ const queries = {
   getAllPreambles: db.prepare('SELECT * FROM preambles ORDER BY id'),
   getPreambleByType: db.prepare('SELECT * FROM preambles WHERE type = ?'),
   updatePreamble: db.prepare('UPDATE preambles SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE type = ?'),
+
+  getChatMessages: db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY id ASC'),
+  getChatMessagesSince: db.prepare('SELECT * FROM chat_messages WHERE session_id = ? AND id > ? ORDER BY id ASC'),
+  insertChatMessage: db.prepare('INSERT INTO chat_messages (session_id, user_id, callsign, message) VALUES (?, ?, ?, ?)'),
+  getChatMessageById: db.prepare('SELECT * FROM chat_messages WHERE id = ?'),
 
   getPositionsByUser: db.prepare('SELECT position FROM user_positions WHERE user_id = ? ORDER BY position'),
   getAllUserPositions: db.prepare('SELECT user_id, position FROM user_positions'),

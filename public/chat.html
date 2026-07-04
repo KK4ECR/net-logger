@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Net Chat</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/tabler-icons.min.css" />
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --green: #1D9E75; --green-dark: #085041;
+  --red: #ef4444; --red-light: #3d0f0f;
+  --bg: #0a0a0a; --surface: #141414; --surface2: #1c1c1c;
+  --border: #2a2a2a; --text: #f0f0ee; --muted: #888884;
+  --radius: 8px;
+}
+html, body { height: 100%; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; }
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-left i { font-size: 22px; color: var(--green); }
+.net-name { font-size: 16px; font-weight: 700; }
+.net-meta { font-size: 12px; color: var(--muted); }
+.closed-badge { font-size: 11px; font-weight: 700; color: var(--red); padding: 3px 10px; border-radius: var(--radius); background: var(--red-light); border: 1px solid var(--red); white-space: nowrap; }
+.live-dot { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--green); white-space: nowrap; }
+.pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--green); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.3)} }
+
+.no-session { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
+.no-session i { font-size: 48px; opacity: 0.3; }
+.no-session p { font-size: 16px; }
+
+#chat-wrap { flex: 1; display: none; flex-direction: column; min-height: 0; }
+
+#messages { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+.msg-row { display: flex; gap: 10px; align-items: baseline; }
+.msg-call { font-family: monospace; font-weight: 800; font-size: 14px; color: var(--green); white-space: nowrap; }
+.msg-call.me { color: #3b82f6; }
+.msg-body { font-size: 14px; color: var(--text); word-break: break-word; }
+.msg-time { font-size: 10px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 8px; }
+.empty-row { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
+
+.composer { border-top: 1px solid var(--border); background: var(--surface); padding: 12px 16px; display: flex; gap: 10px; }
+.composer input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; color: var(--text); font-size: 14px; font-family: inherit; }
+.composer input:focus { outline: none; border-color: var(--green); }
+.composer button { background: var(--green-dark); border: 1px solid var(--green); color: var(--green); padding: 0 18px; border-radius: var(--radius); font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; }
+.composer button:hover { background: var(--green); color: #000; }
+.composer button:disabled { opacity: 0.4; cursor: default; }
+.composer-closed { border-top: 1px solid var(--border); background: var(--surface); padding: 14px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="no-session" class="no-session" style="display:none">
+  <i class="ti ti-message-circle-2"></i>
+  <p>No active net session</p>
+  <p style="font-size:13px">Chat opens automatically once a net is opened in the Net Logger</p>
+</div>
+
+<div id="chat-wrap">
+  <div class="header">
+    <div class="header-left">
+      <i class="ti ti-message-circle-2"></i>
+      <div>
+        <div class="net-name" id="c-net-name">—</div>
+        <div class="net-meta" id="c-net-meta">—</div>
+      </div>
+    </div>
+    <div id="c-live-dot" class="live-dot"><span class="pulse"></span> LIVE</div>
+  </div>
+
+  <div id="messages"><div class="empty-row">No messages yet</div></div>
+
+  <div class="composer" id="composer">
+    <input type="text" id="c-input" placeholder="Message all logged-in operators..." maxlength="500" autocomplete="off" />
+    <button id="c-send" onclick="sendMessage()"><i class="ti ti-send"></i> Send</button>
+  </div>
+  <div class="composer-closed" id="composer-closed" style="display:none">Net closed — chat is read-only</div>
+</div>
+
+<script>
+let myCallsign = null;
+let lastId = 0;
+let pollTimer = null;
+let sessionActive = false;
+
+async function boot() {
+  try {
+    const me = await fetch('/api/auth/me', { credentials: 'include' }).then(r => r.json());
+    if (!me.authenticated) { window.location.href = '/'; return; }
+    myCallsign = me.callsign;
+  } catch (e) { window.location.href = '/'; return; }
+
+  document.getElementById('c-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendMessage();
+  });
+
+  fetchChat();
+  pollTimer = setInterval(fetchChat, 3000);
+  chatHeartbeat();
+  setInterval(chatHeartbeat, 30000);
+}
+
+async function chatHeartbeat() {
+  try { await fetch('/api/heartbeat', { method: 'POST', credentials: 'include' }); } catch (e) {}
+}
+
+async function fetchChat() {
+  try {
+    const r = await fetch('/api/chat?since=' + lastId, { credentials: 'include' });
+    if (r.status === 401) { window.location.href = '/'; return; }
+    const data = await r.json();
+    sessionActive = data.active;
+    document.getElementById('no-session').style.display = sessionActive ? 'none' : 'flex';
+    document.getElementById('chat-wrap').style.display = sessionActive ? 'flex' : 'none';
+    if (!sessionActive) return;
+    await refreshNetInfo();
+    if (data.messages && data.messages.length) appendMessages(data.messages);
+    updateComposerState();
+  } catch (e) { /* transient network error, next poll retries */ }
+}
+
+let lastNetName = null;
+async function refreshNetInfo() {
+  try {
+    const data = await fetch('/api/session/current', { credentials: 'include' }).then(r => r.json());
+    if (!data.active) return;
+    const s = data.session;
+    if (s.net_name === lastNetName) { updateLiveBadge(s.status === 'open'); return; }
+    lastNetName = s.net_name;
+    document.getElementById('c-net-name').textContent = s.net_name || 'Net Logger';
+    document.getElementById('c-net-meta').textContent = [
+      s.nc_callsign ? 'NC: ' + s.nc_callsign : '',
+      s.frequency ? s.frequency + ' MHz' : '',
+      s.mode || ''
+    ].filter(Boolean).join('  ·  ');
+    updateLiveBadge(s.status === 'open');
+  } catch (e) {}
+}
+
+function updateLiveBadge(isOpen) {
+  document.getElementById('c-live-dot').innerHTML = isOpen
+    ? '<span class="pulse"></span> LIVE'
+    : '<span class="closed-badge">NET CLOSED</span>';
+}
+
+function updateComposerState() {
+  const netOpen = !document.getElementById('c-live-dot').querySelector('.closed-badge');
+  document.getElementById('composer').style.display = netOpen ? 'flex' : 'none';
+  document.getElementById('composer-closed').style.display = netOpen ? 'none' : 'block';
+}
+
+function appendMessages(messages) {
+  const el = document.getElementById('messages');
+  if (el.querySelector('.empty-row')) el.innerHTML = '';
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  messages.forEach(m => {
+    lastId = Math.max(lastId, m.id);
+    const row = document.createElement('div');
+    row.className = 'msg-row';
+    const time = new Date((m.posted_at || '').replace(' ', 'T') + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    row.innerHTML = `<span class="msg-call${m.callsign === myCallsign ? ' me' : ''}">${escapeHtml(m.callsign)}</span><span class="msg-body">${escapeHtml(m.message)}</span><span class="msg-time">${time}</span>`;
+    el.appendChild(row);
+  });
+  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function sendMessage() {
+  const input = document.getElementById('c-input');
+  const message = input.value.trim();
+  if (!message || !sessionActive) return;
+  const btn = document.getElementById('c-send');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ message })
+    });
+    if (!r.ok) { const err = await r.json(); alert(err.error || 'Could not send message'); return; }
+    const sent = await r.json();
+    input.value = '';
+    appendMessages([sent]);
+    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+  } catch (e) {
+    alert('Could not send message - check your connection.');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
