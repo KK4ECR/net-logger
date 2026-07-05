@@ -519,6 +519,7 @@ const queries = {
   getRequestByCallsign: db.prepare("SELECT * FROM pending_requests WHERE callsign = ? COLLATE NOCASE AND status = 'pending'"),
 
   getOpenSession: db.prepare(`SELECT * FROM net_sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1`),
+  getOpenSessions: db.prepare(`SELECT * FROM net_sessions WHERE status = 'open' ORDER BY opened_at DESC`),
   getSessionById: db.prepare('SELECT * FROM net_sessions WHERE id = ?'),
   createSession: db.prepare(`INSERT INTO net_sessions (net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, opened_at, opened_by, status) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, 'open')`),
   closeSession: db.prepare(`UPDATE net_sessions SET status = 'closed', closed_at = CURRENT_TIMESTAMP, closed_by = ? WHERE id = ?`),

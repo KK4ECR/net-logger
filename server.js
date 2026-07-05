@@ -223,6 +223,36 @@ app.get('/api/w3w', requireAuth, async (req, res) => {
   }
 });
 
+// ─── NWS WEATHER ALERTS ────────────────────────────────────────────────────────
+// Not tied to any particular net session - shown on every Status Board regardless
+// of which net is being viewed, since weather doesn't respect net boundaries.
+const CLAY_COUNTY_FL_POINT = '29.9925,-81.6773'; // Green Cove Springs, FL (county seat)
+app.get('/api/weather-alerts', requireAuth, async (req, res) => {
+  try {
+    const r = await fetch(`https://api.weather.gov/alerts/active?point=${CLAY_COUNTY_FL_POINT}`, {
+      headers: { 'User-Agent': 'ClayARESNetLogger (https://github.com/KK4ECR/net-logger)', 'Accept': 'application/geo+json' }
+    });
+    if (!r.ok) return res.status(502).json({ error: 'NWS API returned ' + r.status, alerts: [] });
+    const data = await r.json();
+    const alerts = (data.features || []).map(f => ({
+      id: f.id,
+      event: f.properties.event,
+      severity: f.properties.severity,
+      urgency: f.properties.urgency,
+      headline: f.properties.headline,
+      description: f.properties.description,
+      areaDesc: f.properties.areaDesc,
+      effective: f.properties.effective,
+      expires: f.properties.expires,
+      senderName: f.properties.senderName
+    }));
+    res.json({ alerts });
+  } catch(e) {
+    console.error('weather-alerts error:', e.message);
+    res.status(500).json({ error: 'Could not fetch weather alerts', alerts: [] });
+  }
+});
+
 // ─── PUBLIC: ACCOUNT REQUEST ──────────────────────────────────────────────────
 app.get('/api/users/list', (req, res) => {
   const users = queries.getAllUsers.all();
@@ -442,15 +472,31 @@ app.post('/api/admin/requests/:id/deny', requireAdmin, (req, res) => {
 });
 
 // ─── NET SESSIONS ─────────────────────────────────────────────────────────────
+// Multiple nets can be open at once (e.g. a Command net and a Tactical net during
+// an activation). Endpoints that don't already operate on a specific record id
+// resolve which session to use via this helper: an explicit id if one is given,
+// otherwise "the" open session only if there's exactly one - this keeps every
+// existing single-net client call working unchanged.
+function findOpenSession(id) {
+  if (id) {
+    const s = queries.getSessionById.get(id);
+    return (s && s.status === 'open') ? s : null;
+  }
+  const open = queries.getOpenSessions.all();
+  return open.length === 1 ? open[0] : null;
+}
+
+app.get('/api/sessions/open', requireAuth, (req, res) => {
+  res.json(queries.getOpenSessions.all());
+});
+
 app.get('/api/session/current', requireAuth, (req, res) => {
-  const session = queries.getOpenSession.get();
+  const session = findOpenSession(req.query.session);
   if (!session) return res.json({ active: false });
   res.json({ active: true, session, checkins: getFullCheckins(session.id) });
 });
 
 app.post('/api/session/open', requireRole('netcontrol'), (req, res) => {
-  const existing = queries.getOpenSession.get();
-  if (existing) return res.status(409).json({ error: 'A net session is already open' });
   const { net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, incident_name, activation_type } = req.body;
   if (!net_name) return res.status(400).json({ error: 'Net name required' });
   const result = queries.createSession.run(net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, req.session.userId);
@@ -460,9 +506,9 @@ app.post('/api/session/open', requireRole('netcontrol'), (req, res) => {
   res.json({ session: queries.getSessionById.get(sid), checkins: [] });
 });
 
-app.post('/api/session/close', requireRole('netcontrol'), (req, res) => {
-  const session = queries.getOpenSession.get();
-  if (!session) return res.status(404).json({ error: 'No open session' });
+app.post('/api/session/:id/close', requireRole('netcontrol'), (req, res) => {
+  const session = queries.getSessionById.get(req.params.id);
+  if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
   queries.closeSession.run(req.session.userId, session.id);
   res.json({ ok: true });
 });
@@ -495,7 +541,7 @@ app.get('/api/session/:id/checkins', requireAuth, (req, res) => {
 
 // ─── CHECKINS ─────────────────────────────────────────────────────────────────
 app.post('/api/checkin', requireRole('netcontrol', 'backup'), (req, res) => {
-  const session = queries.getOpenSession.get();
+  const session = findOpenSession(req.body.session_id);
   if (!session) return res.status(404).json({ error: 'No open net session' });
   const { callsign, name, license_class, time_in, has_comments, comment_count, comment_notes,
           has_traffic, lat, lon, usng, w3w, address, tactical_call, traffic } = req.body;
@@ -520,8 +566,10 @@ app.post('/api/checkin', requireRole('netcontrol', 'backup'), (req, res) => {
 });
 
 app.delete('/api/checkin/:id', requireRole('netcontrol', 'backup'), (req, res) => {
-  const session = queries.getOpenSession.get();
-  if (!session) return res.status(404).json({ error: 'No open session' });
+  const ci = queries.getCheckinById.get(req.params.id);
+  if (!ci) return res.status(404).json({ error: 'Check-in not found' });
+  const session = queries.getSessionById.get(ci.session_id);
+  if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
   queries.deleteCheckin.run(req.params.id, session.id);
   queries.resequenceCheckins.run(session.id);
   res.json({ ok: true });
@@ -534,10 +582,10 @@ app.put('/api/traffic/:id/passed', requireRole('netcontrol', 'backup'), (req, re
 
 // Add traffic to an already checked-in station
 app.post('/api/checkin/:id/traffic', requireRole('netcontrol', 'backup'), (req, res) => {
-  const session = queries.getOpenSession.get();
-  if (!session) return res.status(404).json({ error: 'No open session' });
   const ci = queries.getCheckinById.get(req.params.id);
-  if (!ci || ci.session_id !== session.id) return res.status(404).json({ error: 'Check-in not found' });
+  if (!ci) return res.status(404).json({ error: 'Check-in not found' });
+  const session = queries.getSessionById.get(ci.session_id);
+  if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
   const { precedence, type, deliver_to, passed, msg_number, from_callsign, description, time_sent, time_received } = req.body;
   const result = queries.insertTraffic.run(
     ci.id, precedence || 'Routine', type || 'Formal', deliver_to || '', passed ? 1 : 0,
@@ -550,8 +598,10 @@ app.post('/api/checkin/:id/traffic', requireRole('netcontrol', 'backup'), (req, 
 
 // Check out / relieve a station
 app.post('/api/checkin/:id/checkout', requireRole('netcontrol', 'backup'), (req, res) => {
-  const session = queries.getOpenSession.get();
-  if (!session) return res.status(404).json({ error: 'No open session' });
+  const ci = queries.getCheckinById.get(req.params.id);
+  if (!ci) return res.status(404).json({ error: 'Check-in not found' });
+  const session = queries.getSessionById.get(ci.session_id);
+  if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
   const { time_out } = req.body;
   queries.checkoutCheckin.run(time_out || null, req.params.id);
   res.json({ ok: true });
@@ -573,7 +623,7 @@ app.get('/status-board.html', (req, res) => {
 });
 
 app.get('/api/status-board', requireAuth, (req, res) => {
-  const session = queries.getOpenSession.get();
+  const session = findOpenSession(req.query.session);
   if (!session) return res.json({ active: false });
   const checkins = getFullCheckins(session.id);
   
@@ -668,7 +718,7 @@ app.get('/api/status-board', requireAuth, (req, res) => {
 // ─── CHAT ──────────────────────────────────────────────────────────────────────
 // Chat is scoped to the currently open net session - it opens and closes with the net.
 app.get('/api/chat', requireAuth, (req, res) => {
-  const session = queries.getOpenSession.get();
+  const session = findOpenSession(req.query.session);
   if (!session) return res.json({ active: false, messages: [] });
   const since = parseInt(req.query.since) || 0;
   const messages = since
@@ -678,7 +728,7 @@ app.get('/api/chat', requireAuth, (req, res) => {
 });
 
 app.post('/api/chat', requireAuth, (req, res) => {
-  const session = queries.getOpenSession.get();
+  const session = findOpenSession(req.body.session_id);
   if (!session) return res.status(409).json({ error: 'No open net session' });
   const message = (req.body.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Message required' });
@@ -689,8 +739,10 @@ app.post('/api/chat', requireAuth, (req, res) => {
 
 // Mark announcement as given
 app.post('/api/checkin/:id/announcement-given', requireRole('netcontrol', 'backup'), (req, res) => {
-  const session = queries.getOpenSession.get();
-  if (!session) return res.status(404).json({ error: 'No open session' });
+  const ci = queries.getCheckinById.get(req.params.id);
+  if (!ci) return res.status(404).json({ error: 'Check-in not found' });
+  const session = queries.getSessionById.get(ci.session_id);
+  if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
   try {
     db.prepare('UPDATE checkins SET announcements_given = COALESCE(announcements_given, 0) + 1 WHERE id = ? AND session_id = ?').run(req.params.id, session.id);
     res.json({ ok: true });
@@ -790,18 +842,12 @@ app.delete('/api/presets/:id/positions/:posId', requireRole('netcontrol'), (req,
 });
 
 // ─── ISSUES ───────────────────────────────────────────────────────────────────
-app.get('/api/session/issues', requireAuth, (req, res) => {
-  const session = queries.getOpenSession.get();
-  if (!session) return res.json([]);
-  res.json(queries.getIssuesBySession.all(session.id));
-});
-
 app.get('/api/session/:id/issues', requireAuth, (req, res) => {
   res.json(queries.getIssuesBySession.all(req.params.id));
 });
 
 app.post('/api/issues', requireRole('netcontrol', 'backup'), (req, res) => {
-  const session = queries.getOpenSession.get();
+  const session = findOpenSession(req.body.session_id);
   if (!session) return res.status(404).json({ error: 'No open session' });
   const { description, priority } = req.body;
   if (!description) return res.status(400).json({ error: 'Description required' });

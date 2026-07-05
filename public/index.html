@@ -361,6 +361,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       <div>
         <div class="topbar-title">Net Logger</div>
         <div class="topbar-net" id="topbar-net">No active net</div>
+        <select class="topbar-net hidden" id="net-switcher" onchange="switchNet(this.value)" style="background:transparent;color:inherit;border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px"></select>
       </div>
     </div>
     <div class="topbar-right">
@@ -510,10 +511,10 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           </div>
         </div>
         <div style="margin-top:1rem;margin-bottom:0.5rem;display:flex;justify-content:flex-end;align-items:center;gap:8px">
-          <a href="/status-board.html" target="_blank" rel="noopener" class="btn" style="font-size:12px;gap:6px;text-decoration:none;background:#185FA5;color:#fff;border-color:#0c3d6e">
+          <a href="/status-board.html" id="link-status-board" target="_blank" rel="noopener" class="btn" style="font-size:12px;gap:6px;text-decoration:none;background:#185FA5;color:#fff;border-color:#0c3d6e">
             <i class="ti ti-layout-dashboard"></i> Open Status Board
           </a>
-          <a href="/chat.html" target="_blank" rel="noopener" class="btn" style="font-size:12px;gap:6px;text-decoration:none;background:#1D9E75;color:#fff;border-color:#0e5a41">
+          <a href="/chat.html" id="link-chat" target="_blank" rel="noopener" class="btn" style="font-size:12px;gap:6px;text-decoration:none;background:#1D9E75;color:#fff;border-color:#0e5a41">
             <i class="ti ti-message-circle-2"></i> Open Chat
           </a>
           <button class="btn" id="btn-close-net-checkin" onclick="closeNetFromCheckin()" style="font-size:12px;background:#A32D2D;color:#fff;border-color:#7a1f1f">
@@ -738,7 +739,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
 <script>
 const ROLES = { netcontrol: 'Net Control', backup: 'Backup NC', observer: 'Observer' };
-let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {} };
+let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [] };
 let msgCount = 0;
 
 async function api(method, path, body) {
@@ -818,7 +819,7 @@ async function submitForgotPassword() {
 async function doLogout() {
   await api('POST', '/auth/logout');
   clearInterval(appState.pollTimer);
-  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {} };
+  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [] };
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('login-password').value = '';
@@ -862,15 +863,52 @@ function applyRoleUI() {
 }
 
 async function loadCurrentSession() {
+  await refreshOpenSessions();
+  if (!appState.openSessions.length) return;
+  await loadSession(appState.openSessions[0].id);
+}
+
+// Multiple nets can be open at once - this keeps the switcher in the topbar in
+// sync with which nets are currently open, independent of which one is selected.
+async function refreshOpenSessions() {
+  try { appState.openSessions = await api('GET', '/sessions/open'); }
+  catch (e) { appState.openSessions = []; }
+  renderNetSwitcher();
+}
+
+function renderNetSwitcher() {
+  const sel = document.getElementById('net-switcher');
+  const label = document.getElementById('topbar-net');
+  if (appState.openSessions.length > 1) {
+    sel.classList.remove('hidden');
+    label.classList.add('hidden');
+    sel.innerHTML = appState.openSessions.map(s =>
+      `<option value="${s.id}" ${appState.session && appState.session.id === s.id ? 'selected' : ''}>${s.net_name}</option>`
+    ).join('');
+  } else {
+    sel.classList.add('hidden');
+    label.classList.remove('hidden');
+  }
+}
+
+async function switchNet(id) {
+  await loadSession(parseInt(id));
+  renderLiveList();
+  renderLog();
+  updateStats();
+  showPage('checkin');
+}
+
+async function loadSession(id) {
   try {
-    const data = await api('GET', '/session/current');
+    const data = await api('GET', '/session/current?session=' + id);
     if (data.active) {
       appState.session = data.session;
       appState.checkins = data.checkins;
       updateSessionUI();
-      renderLiveList();
-      renderLog();
-      updateStats();
+      updateCloseButtonState();
+      updateEmailReportButtons();
+      renderNetSwitcher();
     }
   } catch (e) {}
 }
@@ -889,10 +927,12 @@ async function checkPendingBadge() {
 }
 
 async function pollSession() {
+  await refreshOpenSessions();
   if (!appState.session) return;
   try {
-    const data = await api('GET', '/session/current');
+    const data = await api('GET', '/session/current?session=' + appState.session.id);
     if (data.active) {
+      appState.session = data.session;
       appState.checkins = data.checkins;
       renderLiveList();
       renderLog();
@@ -902,10 +942,16 @@ async function pollSession() {
       updateCloseButtonState();
       // Refresh issues badge silently
       try {
-        const issues = await api('GET', '/session/issues');
+        const issues = await api('GET', '/session/' + appState.session.id + '/issues');
         updateIssuesBadge(issues);
         if (document.getElementById('page-issues').classList.contains('active')) renderIssues(issues);
       } catch(e) {}
+    } else if (appState.session.status === 'open') {
+      // Someone else closed this net - reflect that without wiping the log
+      appState.session.status = 'closed';
+      updateSessionUI();
+      updateCloseButtonState();
+      updateEmailReportButtons();
     }
   } catch (e) {}
 }
@@ -918,8 +964,12 @@ function updateSessionUI() {
   const isOpen = s.status === 'open';
   badge.className = 'status-badge ' + (isOpen ? 'open' : 'closed');
   document.getElementById('net-status-text').textContent = isOpen ? 'NET OPEN' : 'NET CLOSED';
-  document.getElementById('btn-open-net').disabled = isOpen || appState.user.role !== 'netcontrol';
+  document.getElementById('btn-open-net').disabled = appState.user.role !== 'netcontrol';
   document.getElementById('btn-close-net').disabled = !isOpen || appState.user.role !== 'netcontrol';
+  const boardLink = document.getElementById('link-status-board');
+  const chatLink = document.getElementById('link-chat');
+  if (boardLink) boardLink.href = '/status-board.html?session=' + s.id;
+  if (chatLink) chatLink.href = '/chat.html?session=' + s.id;
   if (s.opened_at) {
     const opened = parseUTC(s.opened_at);
     document.getElementById('net-time-display').textContent = 'Opened: ' + opened.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -948,6 +998,7 @@ async function openNet() {
     appState.session = data.session;
     appState.checkins = [];
     updateSessionUI();
+    await refreshOpenSessions();
     showPage('checkin');
   } catch (e) { alert(e.message); }
 }
@@ -955,11 +1006,12 @@ async function openNet() {
 async function closeNet() {
   if (!confirm('Close the net? The log stays available for export.')) return;
   try {
-    await api('POST', '/session/close');
+    await api('POST', '/session/' + appState.session.id + '/close');
     appState.session.status = 'closed';
     updateSessionUI();
     updateCloseButtonState();
     updateEmailReportButtons();
+    await refreshOpenSessions();
     showPage('log');
     showPostCloseReportBanner();
   } catch (e) { alert(e.message); }
@@ -970,11 +1022,12 @@ async function closeNetFromCheckin() {
   if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
   if (!confirm('Close the net? The log stays available for export.')) return;
   try {
-    await api('POST', '/session/close');
+    await api('POST', '/session/' + appState.session.id + '/close');
     appState.session.status = 'closed';
     updateSessionUI();
     updateCloseButtonState();
     updateEmailReportButtons();
+    await refreshOpenSessions();
     showPage('log');
     showPostCloseReportBanner();
   } catch(e) { alert(e.message); }
@@ -1181,6 +1234,7 @@ async function addCheckin() {
   const hasTraffic = document.getElementById('ci-has-traffic').checked;
   try {
     const ci = await api('POST', '/checkin', {
+      session_id: appState.session.id,
       callsign: call,
       name: document.getElementById('ci-name').value,
       license_class: document.getElementById('ci-class').value,
@@ -1597,7 +1651,7 @@ async function loadIssues() {
     return;
   }
   try {
-    const issues = await api('GET', '/session/issues');
+    const issues = await api('GET', '/session/' + appState.session.id + '/issues');
     renderIssues(issues);
     updateIssuesBadge(issues);
   } catch(e) {}
@@ -1642,7 +1696,7 @@ async function addIssue() {
   if (!desc) { alert('Enter an issue description.'); return; }
   if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
   try {
-    await api('POST', '/issues', { description: desc, priority });
+    await api('POST', '/issues', { session_id: appState.session.id, description: desc, priority });
     document.getElementById('issue-desc').value = '';
     document.getElementById('issue-priority').value = 'normal';
     loadIssues();

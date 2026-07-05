@@ -52,14 +52,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.picker-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; width: 320px; }
+.picker-item { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; text-decoration: none; color: var(--text); display: flex; justify-content: space-between; align-items: center; }
+.picker-item:hover { border-color: var(--green); }
+.picker-item-name { font-weight: 700; }
+.picker-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
 </style>
 </head>
 <body>
 
 <div id="no-session" class="no-session" style="display:none">
   <i class="ti ti-message-circle-2"></i>
-  <p>No active net session</p>
-  <p style="font-size:13px">Chat opens automatically once a net is opened in the Net Logger</p>
+  <p id="no-session-text">No active net session</p>
+  <p id="no-session-sub" style="font-size:13px">Chat opens automatically once a net is opened in the Net Logger</p>
+  <div id="net-picker" class="picker-list"></div>
 </div>
 
 <div id="chat-wrap">
@@ -88,6 +95,9 @@ let myCallsign = null;
 let lastId = 0;
 let pollTimer = null;
 let sessionActive = false;
+let currentSessionId = null;
+const urlParams = new URLSearchParams(window.location.search);
+const urlSessionId = urlParams.get('session');
 
 async function boot() {
   try {
@@ -112,23 +122,57 @@ async function chatHeartbeat() {
 
 async function fetchChat() {
   try {
-    const r = await fetch('/api/chat?since=' + lastId, { credentials: 'include' });
+    const url = '/api/chat?since=' + lastId + (urlSessionId ? '&session=' + urlSessionId : '');
+    const r = await fetch(url, { credentials: 'include' });
     if (r.status === 401) { window.location.href = '/'; return; }
     const data = await r.json();
     sessionActive = data.active;
     document.getElementById('no-session').style.display = sessionActive ? 'none' : 'flex';
     document.getElementById('chat-wrap').style.display = sessionActive ? 'flex' : 'none';
-    if (!sessionActive) return;
+    if (!sessionActive) { await showNetPickerIfNeeded(); return; }
+    currentSessionId = data.session_id;
     await refreshNetInfo();
     if (data.messages && data.messages.length) appendMessages(data.messages);
     updateComposerState();
   } catch (e) { /* transient network error, next poll retries */ }
 }
 
+// If this chat isn't pinned to a specific net (no ?session= in the URL) and more
+// than one net is open, let the operator pick which one to join instead of
+// silently guessing.
+async function showNetPickerIfNeeded() {
+  const picker = document.getElementById('net-picker');
+  const text = document.getElementById('no-session-text');
+  const sub = document.getElementById('no-session-sub');
+  if (urlSessionId) {
+    text.textContent = 'That net is not currently open';
+    sub.textContent = 'It may have been closed. Open the Net Logger to check.';
+    picker.innerHTML = '';
+    return;
+  }
+  try {
+    const sessions = await fetch('/api/sessions/open', { credentials: 'include' }).then(r => r.json());
+    if (sessions.length > 1) {
+      text.textContent = 'Multiple nets are open';
+      sub.textContent = 'Choose one to join:';
+      picker.innerHTML = sessions.map(s => `
+        <a class="picker-item" href="?session=${s.id}">
+          <div><div class="picker-item-name">${s.net_name}</div><div class="picker-item-meta">${s.frequency ? s.frequency + ' MHz' : ''} ${s.mode || ''}</div></div>
+          <i class="ti ti-chevron-right"></i>
+        </a>`).join('');
+    } else {
+      text.textContent = 'No active net session';
+      sub.textContent = 'Chat opens automatically once a net is opened in the Net Logger';
+      picker.innerHTML = '';
+    }
+  } catch (e) {}
+}
+
 let lastNetName = null;
 async function refreshNetInfo() {
   try {
-    const data = await fetch('/api/session/current', { credentials: 'include' }).then(r => r.json());
+    const url = '/api/session/current' + (urlSessionId ? '?session=' + urlSessionId : '');
+    const data = await fetch(url, { credentials: 'include' }).then(r => r.json());
     if (!data.active) return;
     const s = data.session;
     if (s.net_name === lastNetName) { updateLiveBadge(s.status === 'open'); return; }
@@ -185,7 +229,7 @@ async function sendMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message, session_id: currentSessionId })
     });
     if (!r.ok) { const err = await r.json(); alert(err.error || 'Could not send message'); return; }
     const sent = await r.json();

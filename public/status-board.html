@@ -144,14 +144,37 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   .section.full-width { grid-column: span 1; }
   .item-row.traf-row { grid-template-columns: 80px 1fr auto; }
 }
+
+/* WEATHER ALERT BANNER */
+#weather-banner { display: none; }
+.wx-alert { padding: 12px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.wx-alert.warning { background: var(--red-light); }
+.wx-alert.watch { background: var(--amber-light); }
+.wx-alert.advisory { background: var(--blue-light); }
+.wx-alert i { font-size: 20px; flex-shrink: 0; }
+.wx-alert.warning i { color: var(--red); }
+.wx-alert.watch i { color: var(--amber); }
+.wx-alert.advisory i { color: var(--blue); }
+.wx-event { font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+.wx-headline { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* NET PICKER */
+.picker-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; width: 320px; }
+.picker-item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; text-decoration: none; color: var(--text); display: flex; justify-content: space-between; align-items: center; }
+.picker-item:hover { border-color: var(--green); }
+.picker-item-name { font-weight: 700; }
+.picker-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
 </style>
 </head>
 <body>
 
+<div id="weather-banner"></div>
+
 <div id="no-session" class="no-session" style="display:none">
   <i class="ti ti-radio"></i>
-  <p>No active net session</p>
-  <p style="font-size:13px">Open a net from the Net Logger to see the status board</p>
+  <p id="no-session-text">No active net session</p>
+  <p id="no-session-sub" style="font-size:13px">Open a net from the Net Logger to see the status board</p>
+  <div id="net-picker" class="picker-list"></div>
 </div>
 
 <div id="board" style="display:none">
@@ -332,14 +355,19 @@ function startClock() {
   }, 1000);
 }
 
+const urlParams = new URLSearchParams(window.location.search);
+const urlSessionId = urlParams.get('session');
+
 async function fetchStatus() {
   try {
-    const r = await fetch('/api/status-board', { credentials: 'include' });
+    const url = '/api/status-board' + (urlSessionId ? '?session=' + urlSessionId : '');
+    const r = await fetch(url, { credentials: 'include' });
     if (r.status === 401) { window.location.href = '/'; return; }
     const data = await r.json();
     if (!data.active) {
-      document.getElementById('no-session').style.display = 'flex';
       document.getElementById('board').style.display = 'none';
+      document.getElementById('no-session').style.display = 'flex';
+      await showNetPickerIfNeeded();
       return;
     }
     document.getElementById('no-session').style.display = 'none';
@@ -518,10 +546,64 @@ async function markPassed(trafficId, btn) {
   } catch(e) { btn.disabled = false; btn.textContent = 'Passed'; }
 }
 
+// If this board isn't pinned to a specific net (no ?session= in the URL) and more
+// than one net is open, let the operator pick which one to display instead of
+// silently guessing.
+async function showNetPickerIfNeeded() {
+  const picker = document.getElementById('net-picker');
+  const text = document.getElementById('no-session-text');
+  const sub = document.getElementById('no-session-sub');
+  if (urlSessionId) {
+    text.textContent = 'That net is not currently open';
+    sub.textContent = 'It may have been closed. Open the Net Logger to check.';
+    picker.innerHTML = '';
+    return;
+  }
+  try {
+    const sessions = await fetch('/api/sessions/open', { credentials: 'include' }).then(r => r.json());
+    if (sessions.length > 1) {
+      text.textContent = 'Multiple nets are open';
+      sub.textContent = 'Choose one to display:';
+      picker.innerHTML = sessions.map(s => `
+        <a class="picker-item" href="?session=${s.id}">
+          <div><div class="picker-item-name">${s.net_name}</div><div class="picker-item-meta">${s.frequency ? s.frequency + ' MHz' : ''} ${s.mode || ''}</div></div>
+          <i class="ti ti-chevron-right"></i>
+        </a>`).join('');
+    } else {
+      text.textContent = 'No active net session';
+      sub.textContent = 'Open a net from the Net Logger to see the status board';
+      picker.innerHTML = '';
+    }
+  } catch (e) {}
+}
+
+// Weather alerts are shown regardless of which net (if any) is selected -
+// they aren't tied to a specific net session.
+async function fetchWeatherAlerts() {
+  try {
+    const data = await fetch('/api/weather-alerts', { credentials: 'include' }).then(r => r.json());
+    const el = document.getElementById('weather-banner');
+    const alerts = data.alerts || [];
+    if (!alerts.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const sevClass = ev => /warning/i.test(ev) ? 'warning' : /watch/i.test(ev) ? 'watch' : 'advisory';
+    el.innerHTML = alerts.map(a => `
+      <div class="wx-alert ${sevClass(a.event)}">
+        <i class="ti ti-alert-triangle"></i>
+        <div>
+          <div class="wx-event">${a.event}</div>
+          <div class="wx-headline">${a.headline || a.areaDesc || ''}</div>
+        </div>
+      </div>`).join('');
+    el.style.display = 'block';
+  } catch (e) {}
+}
+
 // Boot
 startClock();
 fetchStatus();
 pollTimer = setInterval(fetchStatus, 5000);
+fetchWeatherAlerts();
+setInterval(fetchWeatherAlerts, 60000);
 // Status board also sends heartbeat so it shows up in the online list
 async function sbHeartbeat() { try { await fetch('/api/heartbeat', { method: 'POST', credentials: 'include' }); } catch(e) {} }
 sbHeartbeat();
