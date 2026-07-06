@@ -151,10 +151,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .wx-alert.warning { background: var(--red-light); }
 .wx-alert.watch { background: var(--amber-light); }
 .wx-alert.advisory { background: var(--blue-light); }
+.wx-alert.clear { background: var(--green-light); }
 .wx-alert i { font-size: 20px; flex-shrink: 0; }
 .wx-alert.warning i { color: var(--red); }
 .wx-alert.watch i { color: var(--amber); }
 .wx-alert.advisory i { color: var(--blue); }
+.wx-alert.clear i { color: var(--green); }
 .wx-event { font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
 .wx-headline { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
@@ -584,7 +586,18 @@ async function fetchWeatherAlerts() {
     const data = await fetch('/api/weather-alerts', { credentials: 'include' }).then(r => r.json());
     const el = document.getElementById('weather-banner');
     const alerts = data.alerts || [];
-    if (!alerts.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    if (!alerts.length) {
+      el.innerHTML = `
+        <div class="wx-alert clear">
+          <i class="ti ti-shield-check"></i>
+          <div>
+            <div class="wx-event">No active NWS alerts</div>
+            <div class="wx-headline">Clay County, FL is currently clear of watches, warnings, and advisories</div>
+          </div>
+        </div>`;
+      el.style.display = 'block';
+      return;
+    }
     const sevClass = ev => /warning/i.test(ev) ? 'warning' : /watch/i.test(ev) ? 'watch' : 'advisory';
     el.innerHTML = alerts.map(a => `
       <div class="wx-alert ${sevClass(a.event)}">
