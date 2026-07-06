@@ -14,6 +14,9 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const activeUsers = new Map(); // userId -> { callsign, role, lastSeen }
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
 const APP_URL = process.env.APP_URL || 'https://your-app.railway.app';
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || '';
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || '';
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -93,6 +96,37 @@ async function sendEmailWithAttachment(to, subject, html, attachment) {
     return { ok: false, error: e.message };
   }
 }
+
+// ─── SMS (TWILIO) ──────────────────────────────────────────────────────────────
+// Optional, same pattern as email: no-ops with a log line if not configured, so
+// the feature works the moment TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/
+// TWILIO_FROM_NUMBER are set on Railway, without any code changes.
+async function sendSMS(to, body) {
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_FROM_NUMBER) {
+    console.log('Twilio not configured, skipping SMS to', to);
+    return;
+  }
+  try {
+    const auth = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64');
+    const params = new URLSearchParams({ To: to, From: TWILIO_FROM_NUMBER, Body: body });
+    const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) console.error('Twilio SMS error for', to, ':', data.message || r.status);
+    else console.log('SMS sent to', to, '- sid:', data.sid);
+  } catch(e) { console.error('SMS send failed:', e.message); }
+}
+
+// Fan out to every member who has both a phone number on file and SMS alerts enabled.
+function sendSmsToOptedInMembers(body) {
+  const recipients = queries.getSmsRecipients.all();
+  recipients.forEach(r => sendSMS(r.phone, body));
+}
+
+const URGENT_ACTIVATION_TYPES = ['Storm Activation', 'Emergency Activation'];
 
 function emailNewRequestToAdmin(request) {
   const adminEmails = queries.getAdminEmails.all().map(r => r.email);
@@ -427,6 +461,18 @@ app.put('/api/users/:id/admin-flag', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+app.put('/api/users/:id/phone', requireAdmin, (req, res) => {
+  const { phone } = req.body;
+  queries.updateUserPhone.run(phone || null, req.params.id);
+  res.json({ ok: true });
+});
+
+app.put('/api/users/:id/sms-alerts', requireAdmin, (req, res) => {
+  const { sms_alerts } = req.body;
+  queries.updateUserSmsAlerts.run(sms_alerts ? 1 : 0, req.params.id);
+  res.json({ ok: true });
+});
+
 app.put('/api/users/:id/email', requireAdmin, (req, res) => {
   const { email } = req.body;
   queries.updateUserEmail.run(email || null, req.params.id);
@@ -526,6 +572,11 @@ app.post('/api/session/open', requireRole('netcontrol'), (req, res) => {
   if (incident_name) db.prepare('UPDATE net_sessions SET incident_name = ? WHERE id = ?').run(incident_name, sid);
   if (activation_type) db.prepare('UPDATE net_sessions SET activation_type = ? WHERE id = ?').run(activation_type, sid);
   res.json({ session: queries.getSessionById.get(sid), checkins: [] });
+  if (URGENT_ACTIVATION_TYPES.includes(activation_type)) {
+    sendSmsToOptedInMembers(
+      `Clay ARES: ${activation_type} - "${net_name}" is now open. NC: ${nc_callsign || 'TBD'}. Details: ${APP_URL}`
+    );
+  }
 });
 
 app.post('/api/session/:id/close', requireRole('netcontrol'), (req, res) => {
@@ -607,6 +658,14 @@ app.post('/api/checkin', requireRole('netcontrol', 'backup'), (req, res) => {
   checkin.traffic = queries.getTrafficByCheckin.all(result.lastInsertRowid);
   checkin.logged_by_callsign = req.session.callsign;
   res.json(checkin);
+  if (has_traffic && Array.isArray(traffic)) {
+    const emergencyMsg = traffic.find(t => t.precedence === 'Emergency');
+    if (emergencyMsg) {
+      sendSmsToOptedInMembers(
+        `Clay ARES: EMERGENCY traffic from ${callsign.toUpperCase()}${emergencyMsg.description ? ' - ' + emergencyMsg.description : ''}. Details: ${APP_URL}`
+      );
+    }
+  }
 });
 
 app.delete('/api/checkin/:id', requireRole('netcontrol', 'backup'), (req, res) => {
@@ -638,6 +697,11 @@ app.post('/api/checkin/:id/traffic', requireRole('netcontrol', 'backup'), (req, 
   );
   db.prepare('UPDATE checkins SET has_traffic = 1 WHERE id = ?').run(ci.id);
   res.json(db.prepare('SELECT * FROM traffic WHERE id = ?').get(result.lastInsertRowid));
+  if (precedence === 'Emergency') {
+    sendSmsToOptedInMembers(
+      `Clay ARES: EMERGENCY traffic from ${ci.callsign}${description ? ' - ' + description : ''}. Details: ${APP_URL}`
+    );
+  }
 });
 
 // Check out / relieve a station
@@ -990,8 +1054,28 @@ app.get('/ics309/:id', requireAuth, (req, res) => {
 });
 
 // Session history with issues count
+// Supports optional filters (date range, activation type, participating callsign).
+// With no filters, behaves exactly as before - the 20 most recent sessions.
 app.get('/api/session/history-full', requireAuth, (req, res) => {
-  const sessions = queries.getRecentSessions.all();
+  const { from, to, type, callsign } = req.query;
+  const hasFilters = !!(from || to || type || callsign);
+  let sql = 'SELECT DISTINCT ns.* FROM net_sessions ns';
+  const conditions = [];
+  const params = [];
+  if (callsign) {
+    sql += ' JOIN checkins ci ON ci.session_id = ns.id';
+    conditions.push('ci.callsign LIKE ? COLLATE NOCASE');
+    params.push('%' + callsign.trim() + '%');
+  }
+  if (from) { conditions.push('date(ns.opened_at) >= ?'); params.push(from); }
+  if (to) { conditions.push('date(ns.opened_at) <= ?'); params.push(to); }
+  if (type === 'regular') { conditions.push("(ns.activation_type IS NULL OR ns.activation_type = '')"); }
+  else if (type) { conditions.push('ns.activation_type = ?'); params.push(type); }
+  if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+  sql += ' ORDER BY ns.opened_at DESC LIMIT ?';
+  params.push(hasFilters ? 200 : 20);
+
+  const sessions = db.prepare(sql).all(...params);
   const result = sessions.map(s => {
     const openCount = queries.getOpenIssueCount.get(s.id);
     return { ...s, open_issues: openCount ? openCount.cnt : 0 };

@@ -205,6 +205,17 @@ try { db.exec('ALTER TABLE checkins ADD COLUMN tactical_call TEXT'); } catch(e) 
 try { db.exec('ALTER TABLE checkins ADD COLUMN time_out TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE checkins ADD COLUMN location TEXT'); } catch(e) {}
 
+// Traffic column migrations - the server and frontend have always read/written
+// msg_number, from_callsign, description, time_sent, and time_received, but the
+// table and insertTraffic query never actually had these columns, so any
+// attempt to log traffic with them crashed with a "too many parameter values"
+// error. Add the columns so insertTraffic's argument list matches the schema.
+try { db.exec('ALTER TABLE traffic ADD COLUMN msg_number TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN from_callsign TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN description TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN time_sent TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE traffic ADD COLUMN time_received TEXT'); } catch(e) {}
+
 // Net sessions column migrations
 try { db.exec('ALTER TABLE net_sessions ADD COLUMN incident_name TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE net_sessions ADD COLUMN activation_type TEXT'); } catch(e) {}
@@ -217,6 +228,11 @@ try { db.exec('ALTER TABLE issues ADD COLUMN priority TEXT DEFAULT \'normal\'');
 
 // Admin flag migration - separate from role, marks system-notification recipients
 try { db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0'); } catch(e) {}
+
+// SMS alert opt-in migration - phone number and opt-in flag are independent of
+// role/email; a member must have both set to receive text alerts.
+try { db.exec('ALTER TABLE users ADD COLUMN phone TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE users ADD COLUMN sms_alerts INTEGER DEFAULT 0'); } catch(e) {}
 
 // ONE-TIME REPAIR: an early schema version created preset_positions referencing a
 // table named "position_presets" which never existed, breaking every insert with a
@@ -499,7 +515,7 @@ const upsertPreamble = db.prepare(`INSERT INTO preambles (type, title, content, 
 preambleDefaults.forEach(p => upsertPreamble.run(p.type, p.title, p.content));
 
 const queries = {
-  getAllUsers: db.prepare('SELECT id, callsign, role, email, full_name, last_login, is_admin FROM users ORDER BY callsign'),
+  getAllUsers: db.prepare('SELECT id, callsign, role, email, full_name, last_login, is_admin, phone, sms_alerts FROM users ORDER BY callsign'),
   getUserByCallsign: db.prepare('SELECT * FROM users WHERE callsign = ? COLLATE NOCASE'),
   getUserById: db.prepare('SELECT id, callsign, role, email, full_name FROM users WHERE id = ?'),
   createUser: db.prepare('INSERT INTO users (callsign, password_hash, role, email, full_name) VALUES (?, ?, ?, ?, ?)'),
@@ -511,6 +527,9 @@ const queries = {
   getAdminEmails: db.prepare("SELECT email FROM users WHERE role = 'netcontrol' AND email IS NOT NULL AND email != ''"),
   getSystemAdminEmails: db.prepare("SELECT email FROM users WHERE is_admin = 1 AND email IS NOT NULL AND email != ''"),
   updateUserAdminFlag: db.prepare('UPDATE users SET is_admin = ? WHERE id = ?'),
+  updateUserPhone: db.prepare('UPDATE users SET phone = ? WHERE id = ?'),
+  updateUserSmsAlerts: db.prepare('UPDATE users SET sms_alerts = ? WHERE id = ?'),
+  getSmsRecipients: db.prepare("SELECT phone FROM users WHERE sms_alerts = 1 AND phone IS NOT NULL AND phone != ''"),
 
   createRequest: db.prepare('INSERT INTO pending_requests (callsign, full_name, email, requested_role, password_hash) VALUES (?, ?, ?, ?, ?)'),
   getPendingRequests: db.prepare("SELECT * FROM pending_requests WHERE status = 'pending' ORDER BY requested_at ASC"),
@@ -533,7 +552,7 @@ const queries = {
   resequenceCheckins: db.prepare('UPDATE checkins SET seq = (SELECT COUNT(*) FROM checkins c2 WHERE c2.session_id = checkins.session_id AND c2.id <= checkins.id) WHERE session_id = ?'),
 
   getTrafficByCheckin: db.prepare('SELECT * FROM traffic WHERE checkin_id = ? ORDER BY id'),
-  insertTraffic: db.prepare('INSERT INTO traffic (checkin_id, precedence, type, deliver_to, passed) VALUES (?, ?, ?, ?, ?)'),
+  insertTraffic: db.prepare('INSERT INTO traffic (checkin_id, precedence, type, deliver_to, passed, msg_number, from_callsign, description, time_sent, time_received) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   updateTrafficPassed: db.prepare('UPDATE traffic SET passed = ? WHERE id = ?'),
 
   getIssuesBySession: db.prepare('SELECT * FROM issues WHERE session_id = ? ORDER BY created_at DESC'),
