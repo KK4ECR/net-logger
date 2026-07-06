@@ -513,6 +513,28 @@ app.post('/api/session/:id/close', requireRole('netcontrol'), (req, res) => {
   res.json({ ok: true });
 });
 
+// Update an open net's info (Net Control handoff, frequency/mode changes, etc.)
+// without closing and reopening it - closing would fragment the log into two
+// separate operational periods and a fresh ICS 309.
+app.put('/api/session/:id', requireRole('netcontrol'), (req, res) => {
+  const session = queries.getSessionById.get(req.params.id);
+  if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
+  const { nc_callsign, bnc_callsign, frequency, mode } = req.body;
+  db.prepare('UPDATE net_sessions SET nc_callsign = ?, bnc_callsign = ?, frequency = ?, mode = ? WHERE id = ?')
+    .run(nc_callsign || null, bnc_callsign || null, frequency || null, mode || null, session.id);
+  const oldNc = (session.nc_callsign || '').trim().toUpperCase();
+  const newNc = (nc_callsign || '').trim().toUpperCase();
+  if (newNc && newNc !== oldNc) {
+    queries.insertIssue.run(
+      session.id,
+      `Net Control handoff: ${oldNc || 'unassigned'} → ${newNc}`,
+      'normal',
+      req.session.userId
+    );
+  }
+  res.json(queries.getSessionById.get(session.id));
+});
+
 // Generates a PDF of the closed net's report (standard or ICS 309) and emails it to all
 // admin-flagged accounts. Net Control responsibility - confirmed and triggered from the UI.
 app.post('/api/session/:id/email-report', requireRole('netcontrol'), async (req, res) => {
@@ -953,6 +975,85 @@ app.get('/api/session/history-full', requireAuth, (req, res) => {
     return { ...s, open_issues: openCount ? openCount.cnt : 0 };
   });
   res.json(result);
+});
+
+// ─── MONTHLY ACTIVITY REPORT ───────────────────────────────────────────────────
+// A summary of net/activation activity for a given month - useful as a starting
+// point for ARES public service or Section activity reporting. Not an official
+// ARRL form (those vary by Section), just an aggregated, exportable summary of
+// data already captured by the logger.
+function buildMonthlyReport(year, month) {
+  const start = `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const end = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  const sessions = db.prepare(`SELECT * FROM net_sessions WHERE date(opened_at) BETWEEN ? AND ? ORDER BY opened_at`).all(start, end);
+
+  const allOperators = new Set();
+  const byType = {};
+  const rows = sessions.map(s => {
+    const checkins = db.prepare('SELECT callsign FROM checkins WHERE session_id = ?').all(s.id);
+    checkins.forEach(c => allOperators.add(c.callsign.toUpperCase()));
+    const type = s.activation_type || 'Regular Net';
+    byType[type] = (byType[type] || 0) + 1;
+    const durationMin = s.closed_at
+      ? Math.round((new Date(s.closed_at.replace(' ', 'T') + 'Z') - new Date(s.opened_at.replace(' ', 'T') + 'Z')) / 60000)
+      : null;
+    return {
+      id: s.id,
+      net_date: s.net_date || (s.opened_at || '').split(' ')[0],
+      net_name: s.net_name,
+      activation_type: type,
+      incident_name: s.incident_name || '',
+      nc_callsign: s.nc_callsign || '',
+      status: s.status,
+      duration_minutes: durationMin,
+      checkin_count: checkins.length
+    };
+  });
+
+  return {
+    year, month, start, end,
+    totals: {
+      net_count: rows.length,
+      total_minutes: rows.reduce((sum, r) => sum + (r.duration_minutes || 0), 0),
+      total_checkins: rows.reduce((sum, r) => sum + r.checkin_count, 0),
+      unique_operators: allOperators.size,
+      by_type: byType
+    },
+    sessions: rows
+  };
+}
+
+app.get('/api/reports/monthly', requireRole('netcontrol', 'backup'), (req, res) => {
+  const year = parseInt(req.query.year);
+  const month = parseInt(req.query.month);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year and month (1-12) required' });
+  res.json(buildMonthlyReport(year, month));
+});
+
+app.get('/api/reports/monthly.csv', requireRole('netcontrol', 'backup'), (req, res) => {
+  const year = parseInt(req.query.year);
+  const month = parseInt(req.query.month);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year and month (1-12) required' });
+  const report = buildMonthlyReport(year, month);
+  const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const lines = [];
+  lines.push(['Clay County ARES Monthly Activity Report'].map(esc).join(','));
+  lines.push([`${report.year}-${String(report.month).padStart(2, '0')}`].map(esc).join(','));
+  lines.push([]);
+  lines.push(['Nets/Activations', 'Total Net Minutes', 'Total Check-ins', 'Unique Operators'].map(esc).join(','));
+  lines.push([report.totals.net_count, report.totals.total_minutes, report.totals.total_checkins, report.totals.unique_operators].map(esc).join(','));
+  lines.push([]);
+  lines.push(['By Activation Type'].map(esc).join(','));
+  Object.entries(report.totals.by_type).forEach(([type, count]) => lines.push([type, count].map(esc).join(',')));
+  lines.push([]);
+  lines.push(['Date', 'Net Name', 'Activation Type', 'Incident', 'Net Control', 'Status', 'Duration (min)', 'Check-ins'].map(esc).join(','));
+  report.sessions.forEach(r => {
+    lines.push([r.net_date, r.net_name, r.activation_type, r.incident_name, r.nc_callsign, r.status, r.duration_minutes == null ? '' : r.duration_minutes, r.checkin_count].map(esc).join(','));
+  });
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="clay-ares-monthly-report-${report.year}-${String(report.month).padStart(2, '0')}.csv"`);
+  res.send(lines.join('\n'));
 });
 
 // PREAMBLES

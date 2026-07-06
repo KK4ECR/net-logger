@@ -353,6 +353,31 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
   </div>
 </div>
 
+<div id="handoff-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeHandoffModal()">
+  <div class="modal-card" style="max-width:420px">
+    <div class="modal-header">
+      <div class="modal-title"><i class="ti ti-replace"></i> Net Control Handoff</div>
+      <button class="btn sm" onclick="closeHandoffModal()"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Update who's running this net without closing it - the log and ICS 309 stay continuous for the whole operational period.</p>
+      <div class="form-group"><label>Net Control callsign</label><input type="text" id="ho-nc-call" placeholder="e.g. W4SRX" style="font-family:monospace" /></div>
+      <div class="form-group"><label>Backup Net Control</label><input type="text" id="ho-bnc-call" placeholder="Optional" style="font-family:monospace" /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group"><label>Frequency (MHz)</label><input type="text" id="ho-freq" placeholder="146.820" /></div>
+        <div class="form-group"><label>Mode</label>
+          <select id="ho-mode"><option>FM</option><option>SSB</option><option>AM</option><option>CW</option><option>Digital</option><option>DMR</option><option>D-STAR</option><option>System Fusion</option></select>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:8px">Changing the Net Control callsign automatically logs a handoff note in Issues for the record.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeHandoffModal()">Cancel</button>
+      <button class="btn primary" onclick="submitHandoff()"><i class="ti ti-check"></i> Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- APP -->
 <div id="app-screen" class="app-wrap hidden">
   <div class="topbar">
@@ -517,6 +542,9 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <a href="/chat.html" id="link-chat" target="_blank" rel="noopener" class="btn" style="font-size:12px;gap:6px;text-decoration:none;background:#1D9E75;color:#fff;border-color:#0e5a41">
             <i class="ti ti-message-circle-2"></i> Open Chat
           </a>
+          <button class="btn" id="btn-handoff" onclick="openHandoffModal()" style="font-size:12px;background:#6b4fa0;color:#fff;border-color:#4a3670">
+            <i class="ti ti-replace"></i> Net Control Handoff
+          </button>
           <button class="btn" id="btn-close-net-checkin" onclick="closeNetFromCheckin()" style="font-size:12px;background:#A32D2D;color:#fff;border-color:#7a1f1f">
             <i class="ti ti-player-stop"></i> Close Net
           </button>
@@ -601,6 +629,17 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <button class="btn amber" onclick="exportPDF()"><i class="ti ti-file-text"></i> Export PDF</button>
             <button class="btn" id="email-standard-btn" onclick="emailReportToAdmins('standard')" style="display:none"><i class="ti ti-mail"></i> Email to Admins</button>
           </div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-report"></i> Monthly Activity Report</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Summarizes nets, activations, net minutes, and participation for a given month — a starting point for ARES public service or Section activity reporting.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:1rem">
+            <div class="form-group" style="margin:0"><label>Month</label><input type="month" id="report-month" /></div>
+            <button class="btn primary" onclick="loadMonthlyReport()"><i class="ti ti-search"></i> View Report</button>
+            <button class="btn" onclick="printMonthlyReport()"><i class="ti ti-printer"></i> Print</button>
+            <button class="btn" onclick="downloadMonthlyReportCSV()"><i class="ti ti-file-spreadsheet"></i> Download CSV</button>
+          </div>
+          <div id="monthly-report-wrap"></div>
         </div>
         <div class="panel">
           <div class="panel-title"><i class="ti ti-history"></i> Session history</div>
@@ -1035,10 +1074,41 @@ async function closeNetFromCheckin() {
 
 function updateCloseButtonState() {
   const btn = document.getElementById('btn-close-net-checkin');
-  if (!btn) return;
   const isOpen = appState.session && appState.session.status === 'open';
   const isNC = appState.user && appState.user.role === 'netcontrol';
-  btn.disabled = !isOpen || !isNC;
+  if (btn) btn.disabled = !isOpen || !isNC;
+  const handoffBtn = document.getElementById('btn-handoff');
+  if (handoffBtn) handoffBtn.disabled = !isOpen || !isNC;
+}
+
+function openHandoffModal() {
+  if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
+  document.getElementById('ho-nc-call').value = appState.session.nc_callsign || '';
+  document.getElementById('ho-bnc-call').value = appState.session.bnc_callsign || '';
+  document.getElementById('ho-freq').value = appState.session.frequency || '';
+  document.getElementById('ho-mode').value = appState.session.mode || 'FM';
+  document.getElementById('handoff-modal').classList.remove('hidden');
+}
+
+function closeHandoffModal() {
+  document.getElementById('handoff-modal').classList.add('hidden');
+}
+
+async function submitHandoff() {
+  try {
+    const updated = await api('PUT', '/session/' + appState.session.id, {
+      nc_callsign: document.getElementById('ho-nc-call').value.trim(),
+      bnc_callsign: document.getElementById('ho-bnc-call').value.trim(),
+      frequency: document.getElementById('ho-freq').value.trim(),
+      mode: document.getElementById('ho-mode').value
+    });
+    appState.session = updated;
+    updateSessionUI();
+    await refreshOpenSessions();
+    closeHandoffModal();
+    showToast('Net info updated', 'green');
+    if (document.getElementById('page-issues').classList.contains('active')) loadIssues();
+  } catch (e) { alert(e.message); }
 }
 
 // Email-to-admins buttons only make sense for a closed net, and only Net Control may send them
@@ -1610,7 +1680,15 @@ function showPage(name) {
   if (name === 'map') { initMap(); renderMap(); }
   if (name === 'issues') { loadIssues(); }
   if (name === 'preambles') loadPreambles();
-  if (name === 'export') { loadSessionHistory(); updateEmailReportButtons(); }
+  if (name === 'export') {
+    loadSessionHistory();
+    updateEmailReportButtons();
+    const monthInput = document.getElementById('report-month');
+    if (monthInput && !monthInput.value) {
+      const now = new Date();
+      monthInput.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    }
+  }
   if (name === 'schedule') { loadSchedule(); }
 }
 
@@ -1757,6 +1835,99 @@ async function loadSessionHistory() {
       </tr>`).join('')}</tbody>
     </table></div>`;
   } catch(e) {}
+}
+
+// ─── MONTHLY ACTIVITY REPORT ──────────────────────────────────────────────────
+let lastMonthlyReport = null;
+
+async function loadMonthlyReport() {
+  const val = document.getElementById('report-month').value; // "YYYY-MM"
+  if (!val) { alert('Choose a month.'); return; }
+  const [year, month] = val.split('-').map(Number);
+  try {
+    lastMonthlyReport = await api('GET', '/reports/monthly?year=' + year + '&month=' + month);
+    renderMonthlyReport(lastMonthlyReport);
+  } catch (e) { alert(e.message); }
+}
+
+function renderMonthlyReport(report) {
+  const el = document.getElementById('monthly-report-wrap');
+  const t = report.totals;
+  const monthLabel = new Date(report.year, report.month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const typeRows = Object.entries(t.by_type).map(([type, count]) =>
+    `<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0"><span>${type}</span><strong>${count}</strong></div>`
+  ).join('');
+  el.innerHTML = `
+    <div style="font-weight:700;margin-bottom:10px">${monthLabel}</div>
+    <div class="stats-grid" style="margin-bottom:1rem">
+      <div class="stat-card"><div class="stat-label">Nets / activations</div><div class="stat-val">${t.net_count}</div></div>
+      <div class="stat-card"><div class="stat-label">Total net hours</div><div class="stat-val">${(t.total_minutes / 60).toFixed(1)}</div></div>
+      <div class="stat-card"><div class="stat-label">Total check-ins</div><div class="stat-val">${t.total_checkins}</div></div>
+      <div class="stat-card"><div class="stat-label">Unique operators</div><div class="stat-val">${t.unique_operators}</div></div>
+    </div>
+    <div style="margin-bottom:1rem">${typeRows || '<span style="font-size:13px;color:var(--muted)">No activity this month</span>'}</div>
+    <div style="overflow-x:auto"><table class="admin-table">
+      <thead><tr><th>Date</th><th>Net Name</th><th>Type</th><th>Net Control</th><th>Status</th><th>Duration</th><th>Check-ins</th></tr></thead>
+      <tbody>${report.sessions.length ? report.sessions.map(r => `<tr>
+        <td style="white-space:nowrap">${r.net_date}</td>
+        <td>${r.net_name}${r.incident_name ? `<div style="font-size:11px;color:var(--muted)">${r.incident_name}</div>` : ''}</td>
+        <td style="font-size:11px">${r.activation_type}</td>
+        <td style="font-family:monospace">${r.nc_callsign}</td>
+        <td><span class="status-badge ${r.status}" style="font-size:10px"><span class="sdot"></span>${r.status === 'open' ? 'OPEN' : 'CLOSED'}</span></td>
+        <td>${r.duration_minutes != null ? r.duration_minutes + ' min' : '—'}</td>
+        <td>${r.checkin_count}</td>
+      </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No sessions this month</td></tr>'}</tbody>
+    </table></div>`;
+}
+
+function printMonthlyReport() {
+  if (!lastMonthlyReport) { alert('Click View Report first.'); return; }
+  const report = lastMonthlyReport;
+  const t = report.totals;
+  const monthLabel = new Date(report.year, report.month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const rows = report.sessions.map(r => `<tr>
+    <td>${r.net_date}</td><td>${r.net_name}</td><td>${r.activation_type}</td><td>${r.nc_callsign}</td>
+    <td>${r.status}</td><td>${r.duration_minutes != null ? r.duration_minutes : ''}</td><td>${r.checkin_count}</td>
+  </tr>`).join('');
+  const typeRows = Object.entries(t.by_type).map(([type, count]) => `<tr><td>${type}</td><td>${count}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><title>Monthly Activity Report - ${monthLabel}</title>
+  <style>
+    body{font-family:Arial,sans-serif;padding:30px;color:#1a1a18}
+    h1{font-size:20px;margin-bottom:2px} h2{font-size:14px;color:#6b6b68;margin-bottom:20px;font-weight:normal}
+    table{width:100%;border-collapse:collapse;margin-bottom:24px;font-size:12px}
+    th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}
+    th{background:#f4f4f0}
+    .totals{display:flex;gap:24px;margin-bottom:24px}
+    .totals div{border:1px solid #ccc;padding:10px 16px;border-radius:6px}
+    .totals strong{display:block;font-size:22px}
+  </style></head><body>
+  <h1>Clay County ARES — Monthly Activity Report</h1>
+  <h2>${monthLabel}</h2>
+  <div class="totals">
+    <div><strong>${t.net_count}</strong>Nets / activations</div>
+    <div><strong>${(t.total_minutes / 60).toFixed(1)}</strong>Total net hours</div>
+    <div><strong>${t.total_checkins}</strong>Total check-ins</div>
+    <div><strong>${t.unique_operators}</strong>Unique operators</div>
+  </div>
+  <table><thead><tr><th>Activation Type</th><th>Count</th></tr></thead><tbody>${typeRows}</tbody></table>
+  <table><thead><tr><th>Date</th><th>Net Name</th><th>Type</th><th>Net Control</th><th>Status</th><th>Duration (min)</th><th>Check-ins</th></tr></thead><tbody>${rows}</tbody></table>
+  <script>window.onload = function() { window.print(); };<\/script>
+  </body></html>`;
+  const w = window.open('', '_blank', 'width=1000,height=800');
+  w.document.write(html);
+  w.document.close();
+}
+
+function downloadMonthlyReportCSV() {
+  const val = document.getElementById('report-month').value;
+  if (!val) { alert('Choose a month.'); return; }
+  const [year, month] = val.split('-').map(Number);
+  const a = document.createElement('a');
+  a.href = '/api/reports/monthly.csv?year=' + year + '&month=' + month;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 // ─── TRAFFIC MODAL ────────────────────────────────────────────────────────────
