@@ -2,6 +2,8 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
 const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckins, setUserPositions } = require('./database');
@@ -469,6 +471,26 @@ app.post('/api/admin/requests/:id/deny', requireAdmin, (req, res) => {
   queries.updateRequestStatus.run('denied', request.id);
   emailDenialToUser(request);
   res.json({ ok: true });
+});
+
+// ─── DATABASE BACKUP ───────────────────────────────────────────────────────────
+// One-click full database snapshot for disaster recovery, independent of
+// Railway's own volume. Uses SQLite's backup API so any data still sitting in
+// the WAL file gets safely checkpointed into one consistent file before download.
+app.get('/api/admin/backup', requireAdmin, async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const tmpPath = path.join(os.tmpdir(), `netlogger-backup-${Date.now()}.db`);
+  try {
+    await db.backup(tmpPath);
+    res.download(tmpPath, `clay-ares-netlogger-backup-${stamp}.db`, (err) => {
+      fs.unlink(tmpPath, () => {});
+      if (err) console.error('Backup download error:', err.message);
+    });
+  } catch (e) {
+    fs.unlink(tmpPath, () => {});
+    console.error('Backup error:', e.message);
+    res.status(500).json({ error: 'Could not create backup: ' + e.message });
+  }
 });
 
 // ─── NET SESSIONS ─────────────────────────────────────────────────────────────

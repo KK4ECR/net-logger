@@ -770,6 +770,12 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           </div>
           <div id="presets-wrap"><div class="empty-state"><i class="ti ti-layout-list"></i>No presets yet</div></div>
         </div>
+
+        <div class="panel">
+          <div class="panel-title"><i class="ti ti-database-export"></i> Backup &amp; disaster recovery</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Download a complete, point-in-time snapshot of the database — every user, session, check-in, and message. Keep a copy somewhere other than Railway in case the app or its volume is ever lost.</p>
+          <button class="btn primary" onclick="downloadBackup()" id="btn-backup"><i class="ti ti-database-export"></i> Download full backup</button>
+        </div>
       </div>
 
     </div>
@@ -1550,6 +1556,37 @@ async function loadUsers() {
       </tr>`).join('')}</tbody>
     </table></div>`;
   } catch (e) {}
+}
+
+async function downloadBackup() {
+  const btn = document.getElementById('btn-backup');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader-2"></i> Preparing backup...';
+  try {
+    const r = await fetch('/api/admin/backup', { credentials: 'include' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || 'Backup failed');
+    }
+    const blob = await r.blob();
+    const disposition = r.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'netlogger-backup.db';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
 }
 
 async function toggleAdminFlag(id, isChecked) {
