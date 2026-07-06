@@ -476,6 +476,16 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
       <!-- CHECKIN PAGE -->
       <div class="page" id="page-checkin">
+        <div id="long-open-banner" class="hidden" style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:#FAEEDA;border:1.5px solid var(--nc-amber);border-radius:8px;padding:12px 16px;margin-bottom:1rem">
+          <div style="display:flex;align-items:center;gap:10px">
+            <i class="ti ti-clock-exclamation" style="font-size:20px;color:var(--nc-amber)"></i>
+            <span id="long-open-text" style="font-size:13px;color:#5c4310"></span>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button class="btn sm" onclick="dismissLongOpenBanner()">Dismiss</button>
+            <button class="btn sm danger" id="long-open-close-btn" onclick="closeNetFromCheckin()"><i class="ti ti-player-stop"></i> Close Net</button>
+          </div>
+        </div>
         <div class="panel" style="border:1.5px dashed var(--border)">
           <div class="panel-title"><i class="ti ti-user-plus"></i> Add check-in</div>
           <div class="ci-grid">
@@ -809,7 +819,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
 <script>
 const ROLES = { netcontrol: 'Net Control', backup: 'Backup NC', observer: 'Observer' };
-let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [] };
+let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [], dismissedLongOpenSessions: new Set() };
 let msgCount = 0;
 
 async function api(method, path, body) {
@@ -889,7 +899,7 @@ async function submitForgotPassword() {
 async function doLogout() {
   await api('POST', '/auth/logout');
   clearInterval(appState.pollTimer);
-  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [] };
+  appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [], dismissedLongOpenSessions: new Set() };
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('login-password').value = '';
@@ -1029,6 +1039,7 @@ async function loadSession(id) {
       updateCloseButtonState();
       updateEmailReportButtons();
       renderNetSwitcher();
+      checkLongOpenBanner();
     }
   } catch (e) {}
 }
@@ -1060,6 +1071,7 @@ async function pollSession() {
       if (mapInitialized && document.getElementById('page-map').classList.contains('active')) renderMap();
       if (appState.user && (appState.user.role === 'netcontrol' || appState.user.isAdmin)) checkPendingBadge();
       updateCloseButtonState();
+      checkLongOpenBanner();
       // Refresh issues badge silently
       try {
         const issues = await api('GET', '/session/' + appState.session.id + '/issues');
@@ -1160,6 +1172,36 @@ function updateCloseButtonState() {
   if (btn) btn.disabled = !isOpen || !isNC;
   const handoffBtn = document.getElementById('btn-handoff');
   if (handoffBtn) handoffBtn.disabled = !isOpen || !isNC;
+}
+
+// In-app nudge mirroring the server's email reminder - regular nets normally run
+// under an hour, so 2+ hours open is worth a nudge; activations get more slack.
+const LONG_OPEN_REGULAR_HOURS = 2;
+const LONG_OPEN_ACTIVATION_HOURS = 8;
+
+function checkLongOpenBanner() {
+  const banner = document.getElementById('long-open-banner');
+  if (!banner) return;
+  const s = appState.session;
+  if (!s || s.status !== 'open' || !s.opened_at || appState.dismissedLongOpenSessions?.has(s.id)) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const opened = parseUTC(s.opened_at);
+  const hoursOpen = (Date.now() - opened.getTime()) / (1000 * 60 * 60);
+  const threshold = (s.activation_type && s.activation_type.trim()) ? LONG_OPEN_ACTIVATION_HOURS : LONG_OPEN_REGULAR_HOURS;
+  if (hoursOpen < threshold) { banner.classList.add('hidden'); return; }
+  const hoursDisplay = hoursOpen >= 2 ? Math.floor(hoursOpen) + ' hours' : Math.floor(hoursOpen * 60) + ' minutes';
+  document.getElementById('long-open-text').textContent =
+    `"${s.net_name}" has been open for ${hoursDisplay}. Still active, or was it forgotten?`;
+  document.getElementById('long-open-close-btn').style.display = appState.user?.role === 'netcontrol' ? 'inline-flex' : 'none';
+  banner.classList.remove('hidden');
+}
+
+function dismissLongOpenBanner() {
+  if (!appState.dismissedLongOpenSessions) appState.dismissedLongOpenSessions = new Set();
+  if (appState.session) appState.dismissedLongOpenSessions.add(appState.session.id);
+  document.getElementById('long-open-banner').classList.add('hidden');
 }
 
 function openHandoffModal() {

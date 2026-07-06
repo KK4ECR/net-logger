@@ -1432,6 +1432,63 @@ async function checkAndSendReminders() {
 setInterval(checkAndSendReminders, 5 * 60 * 1000);
 checkAndSendReminders();
 
+// ─── LONG-OPEN-NET REMINDER (checked every 15 minutes) ────────────────────────
+// Nudges Net Control (and admin-flagged accounts) if a net has been open long
+// enough that it may have simply been forgotten, rather than left open on
+// purpose for an ongoing activation. Regular nets get a short leash since
+// they normally run under an hour; anything with an activation type gets more
+// slack since those can legitimately run for many hours. Repeats every few
+// hours if the net is still open, rather than firing once and going quiet.
+const REGULAR_NET_HOURS_THRESHOLD = 2;
+const ACTIVATION_HOURS_THRESHOLD = 8;
+const LONG_OPEN_REMINDER_REPEAT_HOURS = 3;
+
+async function checkLongOpenNets() {
+  try {
+    const openSessions = queries.getOpenSessions.all();
+    const now = Date.now();
+    for (const s of openSessions) {
+      if (!s.opened_at) continue;
+      const openedMs = new Date(s.opened_at.replace(' ', 'T') + 'Z').getTime();
+      const hoursOpen = (now - openedMs) / (1000 * 60 * 60);
+      const isActivation = !!(s.activation_type && s.activation_type.trim());
+      const threshold = isActivation ? ACTIVATION_HOURS_THRESHOLD : REGULAR_NET_HOURS_THRESHOLD;
+      if (hoursOpen < threshold) continue;
+
+      const lastReminderMs = s.last_long_open_reminder_at
+        ? new Date(s.last_long_open_reminder_at.replace(' ', 'T') + 'Z').getTime()
+        : null;
+      const hoursSinceReminder = lastReminderMs ? (now - lastReminderMs) / (1000 * 60 * 60) : Infinity;
+      if (hoursSinceReminder < LONG_OPEN_REMINDER_REPEAT_HOURS) continue;
+
+      const recipients = new Set();
+      const nc = s.nc_callsign ? queries.getUserByCallsign.get(s.nc_callsign) : null;
+      if (nc && nc.email) recipients.add(nc.email);
+      queries.getSystemAdminEmails.all().forEach(r => recipients.add(r.email));
+      if (!recipients.size) { queries.markLongOpenReminderSent.run(s.id); continue; }
+
+      const openedDisplay = new Date(openedMs).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto">
+          <div style="background:#BA7517;padding:20px 24px;border-radius:8px 8px 0 0"><h1 style="color:#fff;margin:0;font-size:20px">Clay ARES Net Logger</h1><p style="color:#fbe8c8;margin:4px 0 0;font-size:14px">Long-Open Net Reminder</p></div>
+          <div style="background:#f8f8f6;padding:24px;border:1px solid #e2e2de;border-top:none;border-radius:0 0 8px 8px">
+            <p style="font-size:15px;color:#1a1a18">"<strong>${s.net_name}</strong>" has been open for over ${Math.floor(hoursOpen)} hour${Math.floor(hoursOpen) === 1 ? '' : 's'} (opened ${openedDisplay}).</p>
+            <p style="font-size:15px;color:#1a1a18">If this net has wrapped up, please close it in the Net Logger so the log and ICS 309 reflect the correct operational period. If it's an ongoing activation, no action is needed - you'll get this reminder again in a few hours if it's still open.</p>
+            <a href="${APP_URL}" style="display:inline-block;background:#1D9E75;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px">Open Net Logger</a>
+          </div>
+        </div>`;
+      for (const email of recipients) {
+        await sendEmail(email, `Clay ARES Net Logger: "${s.net_name}" has been open a while`, html);
+      }
+      queries.markLongOpenReminderSent.run(s.id);
+    }
+  } catch(e) {
+    console.error('Long-open-net reminder check error:', e.message);
+  }
+}
+setInterval(checkLongOpenNets, 15 * 60 * 1000);
+checkLongOpenNets();
+
 // ─── MONTHLY SCHEDULE AUTO-EXTEND ──────────────────────────────────────────────
 // Ensures the schedule window keeps rolling forward. On the 1st of each month,
 // extends the populated schedule by one additional month and emails admins.

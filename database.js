@@ -234,6 +234,11 @@ try { db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0'); } catc
 try { db.exec('ALTER TABLE users ADD COLUMN phone TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE users ADD COLUMN sms_alerts INTEGER DEFAULT 0'); } catch(e) {}
 
+// Long-open-net reminder migration - tracks when a nudge was last sent for an
+// open session so the periodic check can repeat every few hours without
+// spamming on every scan.
+try { db.exec('ALTER TABLE net_sessions ADD COLUMN last_long_open_reminder_at DATETIME'); } catch(e) {}
+
 // ONE-TIME REPAIR: an early schema version created preset_positions referencing a
 // table named "position_presets" which never existed, breaking every insert with a
 // foreign key error. Detect that wrong reference and rebuild the table correctly,
@@ -539,6 +544,7 @@ const queries = {
 
   getOpenSession: db.prepare(`SELECT * FROM net_sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1`),
   getOpenSessions: db.prepare(`SELECT * FROM net_sessions WHERE status = 'open' ORDER BY opened_at DESC`),
+  markLongOpenReminderSent: db.prepare('UPDATE net_sessions SET last_long_open_reminder_at = CURRENT_TIMESTAMP WHERE id = ?'),
   getSessionById: db.prepare('SELECT * FROM net_sessions WHERE id = ?'),
   createSession: db.prepare(`INSERT INTO net_sessions (net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, opened_at, opened_by, status) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, 'open')`),
   closeSession: db.prepare(`UPDATE net_sessions SET status = 'closed', closed_at = CURRENT_TIMESTAMP, closed_by = ? WHERE id = ?`),
