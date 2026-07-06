@@ -827,12 +827,17 @@ app.get('/api/status-board', requireAuth, (req, res) => {
 // Chat is scoped to the currently open net session - it opens and closes with the net.
 app.get('/api/chat', requireAuth, (req, res) => {
   const session = findOpenSession(req.query.session);
-  if (!session) return res.json({ active: false, messages: [] });
+  if (!session) return res.json({ active: false, messages: [], positions: [] });
   const since = parseInt(req.query.since) || 0;
   const messages = since
     ? queries.getChatMessagesSince.all(session.id, since)
     : queries.getChatMessages.all(session.id);
-  res.json({ active: true, session_id: session.id, messages });
+  // Currently assigned tactical positions for this net - lets the composer
+  // target a message at a specific position instead of broadcasting to everyone.
+  const positions = db.prepare(
+    "SELECT DISTINCT tactical_call FROM checkins WHERE session_id = ? AND tactical_call IS NOT NULL AND tactical_call != '' ORDER BY tactical_call"
+  ).all(session.id).map(r => r.tactical_call);
+  res.json({ active: true, session_id: session.id, messages, positions });
 });
 
 app.post('/api/chat', requireAuth, (req, res) => {
@@ -841,7 +846,8 @@ app.post('/api/chat', requireAuth, (req, res) => {
   const message = (req.body.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Message required' });
   if (message.length > 500) return res.status(400).json({ error: 'Message too long (500 characters max)' });
-  const result = queries.insertChatMessage.run(session.id, req.session.userId, req.session.callsign, message);
+  const targetPosition = (req.body.target_position || '').trim() || null;
+  const result = queries.insertChatMessage.run(session.id, req.session.userId, req.session.callsign, message, targetPosition);
   res.json(queries.getChatMessageById.get(result.lastInsertRowid));
 });
 

@@ -239,6 +239,11 @@ try { db.exec('ALTER TABLE users ADD COLUMN sms_alerts INTEGER DEFAULT 0'); } ca
 // spamming on every scan.
 try { db.exec('ALTER TABLE net_sessions ADD COLUMN last_long_open_reminder_at DATETIME'); } catch(e) {}
 
+// Direct-to-position chat migration - tags a message as addressed to a
+// specific tactical position. Everyone still sees it; this only affects
+// display (highlighting), not delivery.
+try { db.exec('ALTER TABLE chat_messages ADD COLUMN target_position TEXT'); } catch(e) {}
+
 // ONE-TIME REPAIR: an early schema version created preset_positions referencing a
 // table named "position_presets" which never existed, breaking every insert with a
 // foreign key error. Detect that wrong reference and rebuild the table correctly,
@@ -589,7 +594,7 @@ const queries = {
 
   getChatMessages: db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY id ASC'),
   getChatMessagesSince: db.prepare('SELECT * FROM chat_messages WHERE session_id = ? AND id > ? ORDER BY id ASC'),
-  insertChatMessage: db.prepare('INSERT INTO chat_messages (session_id, user_id, callsign, message) VALUES (?, ?, ?, ?)'),
+  insertChatMessage: db.prepare('INSERT INTO chat_messages (session_id, user_id, callsign, message, target_position) VALUES (?, ?, ?, ?, ?)'),
   getChatMessageById: db.prepare('SELECT * FROM chat_messages WHERE id = ?'),
 
   getPositionsByUser: db.prepare('SELECT position FROM user_positions WHERE user_id = ? ORDER BY position'),

@@ -34,9 +34,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 #chat-wrap { flex: 1; display: none; flex-direction: column; min-height: 0; }
 
 #messages { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
-.msg-row { display: flex; gap: 10px; align-items: baseline; }
+.msg-row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.msg-row.directed { background: rgba(29,158,117,0.08); border-left: 2px solid var(--green); padding: 4px 8px; margin: -4px -8px; border-radius: 4px; }
 .msg-call { font-family: monospace; font-weight: 800; font-size: 14px; color: var(--green); white-space: nowrap; }
 .msg-call.me { color: #3b82f6; }
+.msg-target { font-size: 10px; font-weight: 700; color: var(--green); background: rgba(29,158,117,0.18); padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
 .msg-body { font-size: 14px; color: var(--text); word-break: break-word; }
 .msg-time { font-size: 10px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 8px; }
 .empty-row { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
@@ -44,6 +46,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .composer { border-top: 1px solid var(--border); background: var(--surface); padding: 12px 16px; display: flex; gap: 10px; }
 .composer input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; color: var(--text); font-size: 14px; font-family: inherit; }
 .composer input:focus { outline: none; border-color: var(--green); }
+.composer select { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 10px; color: var(--text); font-size: 13px; font-family: inherit; max-width: 130px; }
+.composer select:focus { outline: none; border-color: var(--green); }
 .composer button { background: var(--green-dark); border: 1px solid var(--green); color: var(--green); padding: 0 18px; border-radius: var(--radius); font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; }
 .composer button:hover { background: var(--green); color: #000; }
 .composer button:disabled { opacity: 0.4; cursor: default; }
@@ -84,6 +88,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="messages"><div class="empty-row">No messages yet</div></div>
 
   <div class="composer" id="composer">
+    <select id="c-target" title="Everyone can still see this message - selecting a position just flags who it's for, like addressing someone over the air">
+      <option value="">Everyone</option>
+    </select>
     <input type="text" id="c-input" placeholder="Message all logged-in operators..." maxlength="500" autocomplete="off" />
     <button id="c-send" onclick="sendMessage()"><i class="ti ti-send"></i> Send</button>
   </div>
@@ -132,9 +139,70 @@ async function fetchChat() {
     if (!sessionActive) { await showNetPickerIfNeeded(); return; }
     currentSessionId = data.session_id;
     await refreshNetInfo();
-    if (data.messages && data.messages.length) appendMessages(data.messages);
+    renderTargetOptions(data.positions || []);
+    if (data.messages && data.messages.length) {
+      appendMessages(data.messages);
+      const fromOthers = data.messages.filter(m => m.callsign !== myCallsign).length;
+      if (fromOthers && (document.hidden || !document.hasFocus())) notifyUnread(fromOthers);
+    }
     updateComposerState();
   } catch (e) { /* transient network error, next poll retries */ }
+}
+
+// ─── UNREAD ALERT (tab title flash + beep) when this window isn't focused ─────
+let unreadCount = 0;
+let flashTimer = null;
+const baseTitle = document.title;
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) clearUnread(); });
+window.addEventListener('focus', clearUnread);
+
+function clearUnread() {
+  if (!unreadCount && !flashTimer) return;
+  unreadCount = 0;
+  if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+  document.title = baseTitle;
+}
+
+function notifyUnread(newCount) {
+  unreadCount += newCount;
+  if (!flashTimer) {
+    let alt = false;
+    flashTimer = setInterval(() => {
+      document.title = alt ? baseTitle : `(${unreadCount}) New message${unreadCount === 1 ? '' : 's'}`;
+      alt = !alt;
+    }, 1000);
+  }
+  playBeep();
+}
+
+function playBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  } catch (e) {}
+}
+
+// ─── DIRECT-TO-POSITION TARGETING ──────────────────────────────────────────────
+// Populated from tactical positions currently assigned in this net. Targeting
+// a position just tags/highlights the message - everyone still sees it, same
+// as addressing a specific station over the air.
+function renderTargetOptions(positions) {
+  const sel = document.getElementById('c-target');
+  const prevValue = sel.value;
+  sel.innerHTML = '<option value="">Everyone</option>' + positions.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+  if (positions.includes(prevValue)) sel.value = prevValue;
 }
 
 // If this chat isn't pinned to a specific net (no ?session= in the URL) and more
@@ -206,9 +274,10 @@ function appendMessages(messages) {
   messages.forEach(m => {
     lastId = Math.max(lastId, m.id);
     const row = document.createElement('div');
-    row.className = 'msg-row';
+    row.className = 'msg-row' + (m.target_position ? ' directed' : '');
     const time = new Date((m.posted_at || '').replace(' ', 'T') + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    row.innerHTML = `<span class="msg-call${m.callsign === myCallsign ? ' me' : ''}">${escapeHtml(m.callsign)}</span><span class="msg-body">${escapeHtml(m.message)}</span><span class="msg-time">${time}</span>`;
+    const targetBadge = m.target_position ? `<span class="msg-target">&rarr; ${escapeHtml(m.target_position)}</span>` : '';
+    row.innerHTML = `<span class="msg-call${m.callsign === myCallsign ? ' me' : ''}">${escapeHtml(m.callsign)}</span>${targetBadge}<span class="msg-body">${escapeHtml(m.message)}</span><span class="msg-time">${time}</span>`;
     el.appendChild(row);
   });
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
@@ -225,15 +294,17 @@ async function sendMessage() {
   const btn = document.getElementById('c-send');
   btn.disabled = true;
   try {
+    const targetPosition = document.getElementById('c-target').value || null;
     const r = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ message, session_id: currentSessionId })
+      body: JSON.stringify({ message, session_id: currentSessionId, target_position: targetPosition })
     });
     if (!r.ok) { const err = await r.json(); alert(err.error || 'Could not send message'); return; }
     const sent = await r.json();
     input.value = '';
+    document.getElementById('c-target').value = '';
     appendMessages([sent]);
     document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
   } catch (e) {
