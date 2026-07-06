@@ -434,8 +434,13 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           </div>
           <div id="qrz-status" style="font-size:12px;margin-top:-8px"></div>
         </div>
+        <div class="panel" id="open-nets-panel" style="display:none;border:1.5px solid var(--nc-green)">
+          <div class="panel-title" style="color:var(--nc-green)"><i class="ti ti-list-details"></i> Currently open nets</div>
+          <div id="open-nets-list" style="display:flex;flex-direction:column;gap:8px"></div>
+        </div>
         <div class="panel" id="net-setup-panel">
           <div class="panel-title"><i class="ti ti-broadcast"></i> Net information</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:-8px;margin-bottom:1rem">Filling in these fields and clicking <strong>Open net</strong> always starts a <strong>new</strong> net, even if one is already open — use <strong>New net</strong> to clear the form first, or use <strong>Net Control Handoff</strong> on the Check-ins tab to edit the currently selected net instead of opening another one.</p>
           <div class="form-grid" id="net-form">
             <div class="form-group span2"><label>Net name</label><input type="text" id="net-name" placeholder="e.g. Clay County ARES Net" /></div>
             <div class="form-group span2"><label>Incident / activation name <span style="color:var(--muted);font-weight:400">(optional — for ICS 309)</span></label><input type="text" id="incident-name" placeholder="e.g. Hurricane Irma Activation 2024" /></div>
@@ -461,6 +466,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <div class="form-group"><label>Start time (local)</label><input type="time" id="net-start-time" /></div>
           </div>
           <div class="btn-row">
+            <button class="btn" id="btn-new-net" onclick="clearNetForm()"><i class="ti ti-plus"></i> New net</button>
             <button class="btn primary" id="btn-open-net" onclick="openNet()"><i class="ti ti-player-play"></i> Open net</button>
             <button class="btn danger" id="btn-close-net" onclick="closeNet()" disabled><i class="ti ti-player-stop"></i> Close net</button>
             <span id="net-time-display" style="font-size:12px;color:var(--muted);align-self:center"></span>
@@ -919,6 +925,7 @@ async function refreshOpenSessions() {
   try { appState.openSessions = await api('GET', '/sessions/open'); }
   catch (e) { appState.openSessions = []; }
   renderNetSwitcher();
+  renderOpenNetsList();
 }
 
 function renderNetSwitcher() {
@@ -934,6 +941,55 @@ function renderNetSwitcher() {
     sel.classList.add('hidden');
     label.classList.remove('hidden');
   }
+}
+
+// Shown on the Setup tab so it's obvious what's already running and how to get
+// to it, since the Net Information form below always opens a brand new net.
+function renderOpenNetsList() {
+  const panel = document.getElementById('open-nets-panel');
+  const list = document.getElementById('open-nets-list');
+  if (!panel || !list) return;
+  if (!appState.openSessions.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  const isNC = appState.user && appState.user.role === 'netcontrol';
+  list.innerHTML = appState.openSessions.map(s => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg);border-radius:8px">
+      <div>
+        <div style="font-weight:600">${s.net_name}${appState.session && appState.session.id === s.id ? ' <span style="font-size:11px;color:var(--nc-green);font-weight:700">· SELECTED</span>' : ''}</div>
+        <div style="font-size:12px;color:var(--muted)">${[s.nc_callsign ? 'NC: ' + s.nc_callsign : '', s.frequency ? s.frequency + ' MHz' : '', s.mode || ''].filter(Boolean).join(' · ')}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn sm" onclick="switchNet(${s.id})"><i class="ti ti-arrow-right"></i> View / Edit</button>
+        ${isNC ? `<button class="btn sm danger" onclick="closeSpecificNet(${s.id},'${s.net_name.replace(/'/g, "\\'")}')"><i class="ti ti-player-stop"></i></button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function clearNetForm() {
+  document.getElementById('net-name').value = '';
+  document.getElementById('incident-name').value = '';
+  document.getElementById('activation-type').value = '';
+  document.getElementById('nc-call').value = '';
+  document.getElementById('bnc-call').value = '';
+  document.getElementById('net-freq').value = '';
+  document.getElementById('net-mode').value = 'FM';
+  document.getElementById('net-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('net-start-time').value = nowTime();
+  document.getElementById('net-name').focus();
+}
+
+async function closeSpecificNet(id, name) {
+  if (!confirm('Close "' + name + '"? The log stays available for export.')) return;
+  try {
+    await api('POST', '/session/' + id + '/close');
+    if (appState.session && appState.session.id === id) {
+      appState.session.status = 'closed';
+      updateSessionUI();
+      updateCloseButtonState();
+      updateEmailReportButtons();
+    }
+    await refreshOpenSessions();
+  } catch (e) { alert(e.message); }
 }
 
 async function switchNet(id) {
