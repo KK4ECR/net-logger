@@ -44,10 +44,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .empty-row { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
 
 .composer { border-top: 1px solid var(--border); background: var(--surface); padding: 12px 16px; display: flex; gap: 10px; }
-.composer input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; color: var(--text); font-size: 14px; font-family: inherit; }
+.composer input { flex: 1 1 auto; min-width: 0; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; color: var(--text); font-size: 14px; font-family: inherit; }
 .composer input:focus { outline: none; border-color: var(--green); }
-.composer select { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 10px; color: var(--text); font-size: 13px; font-family: inherit; max-width: 130px; }
+.composer select { flex: 0 1 110px; min-width: 0; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 8px; color: var(--text); font-size: 13px; font-family: inherit; max-width: 130px; }
 .composer select:focus { outline: none; border-color: var(--green); }
+.composer button { flex-shrink: 0; }
+
+@media (max-width: 420px) {
+  .composer { flex-wrap: wrap; }
+  .composer select { flex: 1 1 100%; max-width: none; height: 36px; }
+  .composer input { flex: 1 1 auto; }
+}
 .composer button { background: var(--green-dark); border: 1px solid var(--green); color: var(--green); padding: 0 18px; border-radius: var(--radius); font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; }
 .composer button:hover { background: var(--green); color: #000; }
 .composer button:disabled { opacity: 0.4; cursor: default; }
