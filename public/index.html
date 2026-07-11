@@ -207,12 +207,19 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 .toast.red{background:var(--nc-red);}
 
 /* MOBILE NAV (hamburger + off-canvas drawer) - hidden/inert on desktop */
-.nav-toggle-btn{display:none;background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:4px;margin-right:2px;line-height:1;}
+/* Drawn with CSS, not an icon-font glyph - a font that fails to load (blocked
+   CDN, offline first load, etc.) would otherwise leave the only mobile nav
+   control invisible while still clickable, which is worse than no icon at all. */
+.nav-toggle-btn{display:none;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;padding:8px;margin-right:2px;width:36px;height:36px;flex-shrink:0;}
+.hamburger-icon{position:relative;display:block;width:20px;height:2px;background:var(--text);border-radius:1px;}
+.hamburger-icon::before,.hamburger-icon::after{content:'';position:absolute;left:0;width:20px;height:2px;background:var(--text);border-radius:1px;}
+.hamburger-icon::before{top:-6px;}
+.hamburger-icon::after{top:6px;}
 .sidebar-backdrop{display:none;position:fixed;top:52px;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:150;}
 .sidebar-backdrop.show{display:block;}
 
 @media(max-width:700px){
-  .nav-toggle-btn{display:inline-flex;align-items:center;}
+  .nav-toggle-btn{display:flex;}
   .sidebar{
     display:flex;flex-direction:column;
     position:fixed;top:52px;left:0;bottom:0;width:230px;z-index:200;
@@ -397,7 +404,7 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 <div id="app-screen" class="app-wrap hidden">
   <div class="topbar">
     <div class="topbar-left">
-      <button class="nav-toggle-btn" onclick="toggleMobileNav()" aria-label="Menu"><i class="ti ti-menu-2"></i></button>
+      <button class="nav-toggle-btn" onclick="toggleMobileNav()" aria-label="Menu"><span class="hamburger-icon"></span></button>
       <i class="ti ti-radio"></i>
       <div>
         <div class="topbar-title">Net Logger</div>
