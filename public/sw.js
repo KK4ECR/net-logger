@@ -1,5 +1,5 @@
-// Net Logger Service Worker — v2
-const CACHE = 'netlogger-v2';
+// Net Logger Service Worker — v3
+const CACHE = 'netlogger-v3';
 
 // App shell: always precache these on install
 const PRECACHE = [
@@ -45,9 +45,7 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       fetch(request)
         .then(r => {
-          if (r.ok) {
-            caches.open(CACHE).then(c => c.put(request, r.clone()));
-          }
+          if (r.ok) e.waitUntil(caches.open(CACHE).then(c => c.put(request, r.clone())));
           return r;
         })
         .catch(() => caches.match(request)
@@ -60,8 +58,29 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // CDN and static assets: stale-while-revalidate
-  // Serve cached immediately, update cache in background
+  // App pages (this origin's HTML): network-first, so a new deploy is visible
+  // the moment the device is online, falling back to the cached shell only
+  // when actually offline. Stale-while-revalidate previously served an old
+  // cached copy of the app on every load regardless of connectivity. The
+  // cache write is wrapped in waitUntil so it reliably completes for the
+  // offline fallback, instead of being a fire-and-forget promise that can
+  // get cut off once the response is sent.
+  const isSameOrigin = url.origin === self.location.origin;
+  const isAppPage = isSameOrigin && (url.pathname === '/' || url.pathname.endsWith('.html'));
+  if (isAppPage) {
+    e.respondWith(
+      fetch(request)
+        .then(r => {
+          if (r.ok) e.waitUntil(caches.open(CACHE).then(c => c.put(request, r.clone())));
+          return r;
+        })
+        .catch(() => caches.match(request).then(cached => cached || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Third-party CDN assets (icons, Leaflet, etc.): stale-while-revalidate is
+  // fine here since these change rarely and fast paint matters more.
   e.respondWith(
     caches.open(CACHE).then(async c => {
       const cached = await c.match(request);
