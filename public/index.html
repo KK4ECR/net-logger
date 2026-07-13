@@ -27,6 +27,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
 .form-group label{font-size:12px;font-weight:500;color:var(--muted);}
 .form-group select,.form-group input{height:38px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);padding:0 12px;font-size:14px;width:100%;}
+.password-field-wrap{position:relative;}
+.password-field-wrap input{padding-right:52px!important;}
+.pw-toggle-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--nc-green-dark);font-size:11px;font-weight:600;padding:4px 6px;font-family:inherit;}
+.pw-toggle-btn:hover{text-decoration:underline;}
+.caps-lock-warning{display:none;align-items:center;gap:5px;font-size:11px;color:var(--nc-amber);font-weight:600;margin-top:4px;}
+.caps-lock-warning.show{display:flex;}
 .form-group select:focus,.form-group input:focus{outline:none;border-color:var(--nc-green);box-shadow:0 0 0 3px rgba(29,158,117,.12);}
 .login-err{font-size:13px;color:var(--nc-red);margin-bottom:12px;min-height:18px;}
 .login-success{font-size:13px;color:var(--nc-green);margin-bottom:12px;min-height:18px;background:var(--nc-green-light);padding:8px 10px;border-radius:var(--radius);}
@@ -254,7 +260,11 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       </div>
       <div class="form-group">
         <label>Password</label>
-        <input type="password" id="login-password" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
+        <div class="password-field-wrap">
+          <input type="password" id="login-password" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
+          <button type="button" class="pw-toggle-btn" id="login-password-toggle">Show</button>
+        </div>
+        <div class="caps-lock-warning" id="login-password-caps">Caps Lock is on</div>
       </div>
       <div class="login-err" id="login-err"></div>
       <button class="btn primary" style="width:100%;justify-content:center" onclick="doLogin()"><i class="ti ti-login"></i> Sign in</button>
@@ -300,11 +310,19 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
       </div>
       <div class="form-group">
         <label>Password</label>
-        <input type="password" id="req-password" placeholder="Choose a password (min 6 chars)" />
+        <div class="password-field-wrap">
+          <input type="password" id="req-password" placeholder="Choose a password (min 6 chars)" />
+          <button type="button" class="pw-toggle-btn" id="req-password-toggle">Show</button>
+        </div>
+        <div class="caps-lock-warning" id="req-password-caps">Caps Lock is on</div>
       </div>
       <div class="form-group">
         <label>Confirm password</label>
-        <input type="password" id="req-password2" placeholder="Confirm password" />
+        <div class="password-field-wrap">
+          <input type="password" id="req-password2" placeholder="Confirm password" />
+          <button type="button" class="pw-toggle-btn" id="req-password2-toggle">Show</button>
+        </div>
+        <div class="caps-lock-warning" id="req-password2-caps">Caps Lock is on</div>
       </div>
       <div class="login-err" id="req-err"></div>
       <div class="login-success" id="req-success" style="display:none"></div>
@@ -453,7 +471,13 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div class="panel-title"><i class="ti ti-key"></i> QRZ XML login</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
             <div class="form-group" style="min-width:160px;flex:1"><label>QRZ username</label><input type="text" id="qrz-user" placeholder="Your callsign" /></div>
-            <div class="form-group" style="min-width:160px;flex:1"><label>QRZ password</label><input type="password" id="qrz-pass" placeholder="Password" /></div>
+            <div class="form-group" style="min-width:160px;flex:1"><label>QRZ password</label>
+              <div class="password-field-wrap">
+                <input type="password" id="qrz-pass" placeholder="Password" />
+                <button type="button" class="pw-toggle-btn" id="qrz-pass-toggle">Show</button>
+              </div>
+              <div class="caps-lock-warning" id="qrz-pass-caps">Caps Lock is on</div>
+            </div>
             <button class="btn" onclick="testQRZ()" style="margin-bottom:14px"><i class="ti ti-plug"></i> Connect</button>
           </div>
           <div id="qrz-status" style="font-size:12px;margin-top:-8px"></div>
@@ -796,7 +820,13 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
             <div class="form-group"><label>Callsign</label><input type="text" id="new-call" placeholder="W4XYZ" oninput="this.value=this.value.toUpperCase()" /></div>
             <div class="form-group"><label>Full name</label><input type="text" id="new-fullname" placeholder="Full name" /></div>
             <div class="form-group"><label>Email</label><input type="email" id="new-email" placeholder="email@example.com" /></div>
-            <div class="form-group"><label>Password</label><input type="password" id="new-pass" placeholder="Password" /></div>
+            <div class="form-group"><label>Password</label>
+              <div class="password-field-wrap">
+                <input type="password" id="new-pass" placeholder="Password" />
+                <button type="button" class="pw-toggle-btn" id="new-pass-toggle">Show</button>
+              </div>
+              <div class="caps-lock-warning" id="new-pass-caps">Caps Lock is on</div>
+            </div>
             <div class="form-group"><label>Role</label>
               <select id="new-role"><option value="netcontrol">Net Control</option><option value="backup">Backup NC</option><option value="observer">Observer</option></select>
             </div>
@@ -843,6 +873,33 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
 
 <script>
 const ROLES = { netcontrol: 'Net Control', backup: 'Backup NC', observer: 'Observer' };
+
+// Wires a password input up with a Show/Hide reveal toggle and a Caps Lock
+// warning. Text-only toggle (no icon font) so it can never render invisible
+// if an external font fails to load.
+function setupPasswordField(inputId) {
+  const input = document.getElementById(inputId);
+  const toggleBtn = document.getElementById(inputId + '-toggle');
+  const warning = document.getElementById(inputId + '-caps');
+  if (!input) return;
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const revealing = input.type === 'password';
+      input.type = revealing ? 'text' : 'password';
+      toggleBtn.textContent = revealing ? 'Hide' : 'Show';
+    });
+  }
+  if (warning) {
+    const checkCaps = e => {
+      const on = typeof e.getModifierState === 'function' && e.getModifierState('CapsLock');
+      warning.classList.toggle('show', !!on);
+    };
+    input.addEventListener('keydown', checkCaps);
+    input.addEventListener('keyup', checkCaps);
+    input.addEventListener('blur', () => warning.classList.remove('show'));
+  }
+}
+['login-password', 'req-password', 'req-password2', 'qrz-pass', 'new-pass'].forEach(setupPasswordField);
 let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [], dismissedLongOpenSessions: new Set() };
 let msgCount = 0;
 
