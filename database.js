@@ -191,6 +191,27 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_by TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS net_open_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    requested_by INTEGER NOT NULL REFERENCES users(id),
+    requested_by_callsign TEXT NOT NULL,
+    net_name TEXT NOT NULL,
+    frequency TEXT,
+    mode TEXT,
+    net_date TEXT,
+    start_time TEXT,
+    nc_callsign TEXT,
+    bnc_callsign TEXT,
+    incident_name TEXT,
+    activation_type TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_by INTEGER REFERENCES users(id),
+    resolved_by_callsign TEXT,
+    created_session_id INTEGER REFERENCES net_sessions(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME
+  );
 `);
 
 // Migrations
@@ -601,6 +622,14 @@ const queries = {
   getAllUserPositions: db.prepare('SELECT user_id, position FROM user_positions'),
   insertUserPosition: db.prepare('INSERT OR IGNORE INTO user_positions (user_id, position) VALUES (?, ?)'),
   deleteUserPositionsForUser: db.prepare('DELETE FROM user_positions WHERE user_id = ?'),
+
+  insertOpenRequest: db.prepare(`INSERT INTO net_open_requests
+    (requested_by, requested_by_callsign, net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, incident_name, activation_type, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`),
+  getOpenRequestById: db.prepare('SELECT * FROM net_open_requests WHERE id = ?'),
+  getPendingOpenRequestByRequester: db.prepare(`SELECT * FROM net_open_requests WHERE requested_by = ? AND status = 'pending' ORDER BY id DESC LIMIT 1`),
+  getAllPendingOpenRequests: db.prepare(`SELECT * FROM net_open_requests WHERE status = 'pending' ORDER BY id ASC`),
+  resolveOpenRequest: db.prepare(`UPDATE net_open_requests SET status = ?, resolved_by = ?, resolved_by_callsign = ?, created_session_id = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`),
 };
 
 const setUserPositions = db.transaction((userId, positions) => {

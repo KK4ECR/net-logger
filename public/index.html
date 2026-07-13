@@ -486,6 +486,15 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div class="panel-title" style="color:var(--nc-green)"><i class="ti ti-list-details"></i> Currently open nets</div>
           <div id="open-nets-list" style="display:flex;flex-direction:column;gap:8px"></div>
         </div>
+        <div class="panel" id="open-request-pending-panel" style="display:none;border:1.5px solid var(--nc-amber);background:#FAEEDA">
+          <div class="panel-title" style="color:#8a5a00"><i class="ti ti-hourglass"></i> Waiting for approval</div>
+          <p id="open-request-pending-text" style="font-size:13px;margin-bottom:10px"></p>
+          <button class="btn sm" onclick="cancelOpenRequest()"><i class="ti ti-x"></i> Cancel request</button>
+        </div>
+        <div class="panel" id="open-requests-approve-panel" style="display:none;border:1.5px solid var(--nc-amber);background:#FAEEDA">
+          <div class="panel-title" style="color:#8a5a00"><i class="ti ti-bell-ringing"></i> Net open requests awaiting your approval</div>
+          <div id="open-requests-approve-list" style="display:flex;flex-direction:column;gap:8px"></div>
+        </div>
         <div class="panel" id="net-setup-panel">
           <div class="panel-title"><i class="ti ti-broadcast"></i> Net information</div>
           <p style="font-size:12px;color:var(--muted);margin-top:-8px;margin-bottom:1rem">Filling in these fields and clicking <strong>Open net</strong> always starts a <strong>new</strong> net, even if one is already open — use <strong>New net</strong> to clear the form first, or use <strong>Net Control Handoff</strong> on the Check-ins tab to edit the currently selected net instead of opening another one.</p>
@@ -900,7 +909,19 @@ function setupPasswordField(inputId) {
   }
 }
 ['login-password', 'req-password', 'req-password2', 'qrz-pass', 'new-pass'].forEach(setupPasswordField);
-let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [], dismissedLongOpenSessions: new Set() };
+let appState = { user: null, session: null, checkins: [], qrzSession: null, qrzUser: '', qrzPass: '', pollTimer: null, userPositionsByCallsign: {}, openSessions: [], dismissedLongOpenSessions: new Set(), openRequestMine: null, openRequestsToApprove: [] };
+
+// Whether the current user is allowed to close this specific session - either
+// they're the net's own assigned Net Control, an Admin, or the net has no NC
+// assigned yet so there's no one to defer to. Role check first since backup/
+// observer accounts can never close nets regardless of callsign.
+function canCloseSession(s) {
+  if (!appState.user || appState.user.role !== 'netcontrol') return false;
+  if (appState.user.isAdmin) return true;
+  const nc = (s.nc_callsign || '').trim().toUpperCase();
+  if (!nc) return true;
+  return (appState.user.callsign || '').trim().toUpperCase() === nc;
+}
 let msgCount = 0;
 
 async function api(method, path, body) {
@@ -1025,6 +1046,7 @@ function applyRoleUI() {
 
 async function loadCurrentSession() {
   await refreshOpenSessions();
+  await refreshOpenRequests();
   if (!appState.openSessions.length) return;
   await loadSession(appState.openSessions[0].id);
 }
@@ -1036,6 +1058,74 @@ async function refreshOpenSessions() {
   catch (e) { appState.openSessions = []; }
   renderNetSwitcher();
   renderOpenNetsList();
+}
+
+// Only relevant to netcontrol-role users: whether they have their own new-net
+// request waiting on someone else's approval, and whether they're the Net
+// Control of a running net with someone else's request waiting on them.
+async function refreshOpenRequests() {
+  if (!appState.user || appState.user.role !== 'netcontrol') return;
+  try { appState.openRequestMine = await api('GET', '/session/open-requests/mine'); }
+  catch (e) { appState.openRequestMine = null; }
+  try { appState.openRequestsToApprove = await api('GET', '/session/open-requests/to-approve'); }
+  catch (e) { appState.openRequestsToApprove = []; }
+  renderOpenRequestPending();
+  renderOpenRequestsToApprove();
+}
+
+function renderOpenRequestPending() {
+  const panel = document.getElementById('open-request-pending-panel');
+  if (!panel) return;
+  const r = appState.openRequestMine;
+  if (!r) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  document.getElementById('open-request-pending-text').textContent =
+    `Your request to open "${r.net_name}" is waiting for the current Net Control to approve it.`;
+}
+
+function renderOpenRequestsToApprove() {
+  const panel = document.getElementById('open-requests-approve-panel');
+  const list = document.getElementById('open-requests-approve-list');
+  if (!panel || !list) return;
+  const requests = appState.openRequestsToApprove || [];
+  if (!requests.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  list.innerHTML = requests.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--surface);border-radius:8px">
+      <div>
+        <div style="font-weight:600">${r.net_name}</div>
+        <div style="font-size:12px;color:var(--muted)">Requested by ${r.requested_by_callsign}${r.nc_callsign ? ' · NC: ' + r.nc_callsign : ''}${r.frequency ? ' · ' + r.frequency + ' MHz' : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn sm primary" onclick="approveOpenRequest(${r.id})"><i class="ti ti-check"></i> Approve</button>
+        <button class="btn sm danger" onclick="denyOpenRequest(${r.id})"><i class="ti ti-x"></i> Deny</button>
+      </div>
+    </div>`).join('');
+}
+
+async function cancelOpenRequest() {
+  const r = appState.openRequestMine;
+  if (!r) return;
+  try {
+    await api('POST', '/session/open-requests/' + r.id + '/cancel');
+    appState.openRequestMine = null;
+    renderOpenRequestPending();
+  } catch (e) { alert(e.message); }
+}
+
+async function approveOpenRequest(id) {
+  try {
+    await api('POST', '/session/open-requests/' + id + '/approve');
+    await refreshOpenSessions();
+    await refreshOpenRequests();
+  } catch (e) { alert(e.message); }
+}
+
+async function denyOpenRequest(id) {
+  try {
+    await api('POST', '/session/open-requests/' + id + '/deny');
+    await refreshOpenRequests();
+  } catch (e) { alert(e.message); }
 }
 
 function renderNetSwitcher() {
@@ -1061,7 +1151,6 @@ function renderOpenNetsList() {
   if (!panel || !list) return;
   if (!appState.openSessions.length) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
-  const isNC = appState.user && appState.user.role === 'netcontrol';
   list.innerHTML = appState.openSessions.map(s => `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg);border-radius:8px">
       <div>
@@ -1070,7 +1159,7 @@ function renderOpenNetsList() {
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn sm" onclick="switchNet(${s.id})"><i class="ti ti-arrow-right"></i> View / Edit</button>
-        ${isNC ? `<button class="btn sm danger" onclick="closeSpecificNet(${s.id},'${s.net_name.replace(/'/g, "\\'")}')"><i class="ti ti-player-stop"></i></button>` : ''}
+        ${canCloseSession(s) ? `<button class="btn sm danger" onclick="closeSpecificNet(${s.id},'${s.net_name.replace(/'/g, "\\'")}')"><i class="ti ti-player-stop"></i></button>` : ''}
       </div>
     </div>`).join('');
 }
@@ -1140,6 +1229,7 @@ async function checkPendingBadge() {
 
 async function pollSession() {
   await refreshOpenSessions();
+  await refreshOpenRequests();
   if (!appState.session) return;
   try {
     const data = await api('GET', '/session/current?session=' + appState.session.id);
@@ -1178,7 +1268,7 @@ function updateSessionUI() {
   badge.className = 'status-badge ' + (isOpen ? 'open' : 'closed');
   document.getElementById('net-status-text').textContent = isOpen ? 'NET OPEN' : 'NET CLOSED';
   document.getElementById('btn-open-net').disabled = appState.user.role !== 'netcontrol';
-  document.getElementById('btn-close-net').disabled = !isOpen || appState.user.role !== 'netcontrol';
+  document.getElementById('btn-close-net').disabled = !isOpen || !canCloseSession(s);
   const boardLink = document.getElementById('link-status-board');
   const chatLink = document.getElementById('link-chat');
   if (boardLink) boardLink.href = '/status-board.html?session=' + s.id;
@@ -1208,6 +1298,12 @@ async function openNet() {
       incident_name: document.getElementById('incident-name').value.trim() || null,
       activation_type: document.getElementById('activation-type').value || null
     });
+    if (data.pending) {
+      appState.openRequestMine = data.request;
+      renderOpenRequestPending();
+      alert(`A net is already running. Your request to open "${name}" has been sent to its Net Control for approval.`);
+      return;
+    }
     appState.session = data.session;
     appState.checkins = [];
     updateSessionUI();
@@ -1231,8 +1327,8 @@ async function closeNet() {
 }
 
 async function closeNetFromCheckin() {
-  if (appState.user && appState.user.role !== 'netcontrol') { alert('Only Net Control can close the net.'); return; }
   if (!appState.session || appState.session.status !== 'open') { alert('No open net session.'); return; }
+  if (!canCloseSession(appState.session)) { alert('Only ' + (appState.session.nc_callsign || 'this net\'s Net Control') + ' or an Admin can close this net.'); return; }
   if (!confirm('Close the net? The log stays available for export.')) return;
   try {
     await api('POST', '/session/' + appState.session.id + '/close');
@@ -1250,7 +1346,7 @@ function updateCloseButtonState() {
   const btn = document.getElementById('btn-close-net-checkin');
   const isOpen = appState.session && appState.session.status === 'open';
   const isNC = appState.user && appState.user.role === 'netcontrol';
-  if (btn) btn.disabled = !isOpen || !isNC;
+  if (btn) btn.disabled = !isOpen || !appState.session || !canCloseSession(appState.session);
   const handoffBtn = document.getElementById('btn-handoff');
   if (handoffBtn) handoffBtn.disabled = !isOpen || !isNC;
 }

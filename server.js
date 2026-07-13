@@ -554,6 +554,35 @@ function findOpenSession(id) {
   return open.length === 1 ? open[0] : null;
 }
 
+// Matches a logged-in user's callsign against the assigned Net Control of a
+// session, case/whitespace-insensitively. A session with no nc_callsign
+// assigned yet has no one to defer to, so it doesn't gate anything.
+function callsignMatchesNc(callsign, session) {
+  const nc = (session.nc_callsign || '').trim().toUpperCase();
+  if (!nc) return false;
+  return (callsign || '').trim().toUpperCase() === nc;
+}
+
+function isNcOfAnyOpenSession(callsign, openSessions) {
+  return openSessions.some(s => callsignMatchesNc(callsign, s));
+}
+
+// Creates the actual net_sessions row plus its incident/activation-type
+// follow-up updates and urgent-activation SMS blast. Shared by the direct-open
+// path and the open-request approval path so both end up identical.
+function createNetSession({ net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, incident_name, activation_type }, openedByUserId) {
+  const result = queries.createSession.run(net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, openedByUserId);
+  const sid = result.lastInsertRowid;
+  if (incident_name) db.prepare('UPDATE net_sessions SET incident_name = ? WHERE id = ?').run(incident_name, sid);
+  if (activation_type) db.prepare('UPDATE net_sessions SET activation_type = ? WHERE id = ?').run(activation_type, sid);
+  if (URGENT_ACTIVATION_TYPES.includes(activation_type)) {
+    sendSmsToOptedInMembers(
+      `Clay ARES: ${activation_type} - "${net_name}" is now open. NC: ${nc_callsign || 'TBD'}. Details: ${APP_URL}`
+    );
+  }
+  return queries.getSessionById.get(sid);
+}
+
 app.get('/api/sessions/open', requireAuth, (req, res) => {
   res.json(queries.getOpenSessions.all());
 });
@@ -564,24 +593,85 @@ app.get('/api/session/current', requireAuth, (req, res) => {
   res.json({ active: true, session, checkins: getFullCheckins(session.id) });
 });
 
+// Opening a net while another is already running is how duplicate nets get
+// created by accident, so if the requester isn't the Net Control of any
+// currently open net, this files a pending request instead of opening
+// immediately - the NC of the running net has to approve it first. If nothing
+// is open, or the requester is already NC of an open net, it opens right away.
 app.post('/api/session/open', requireRole('netcontrol'), (req, res) => {
   const { net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, incident_name, activation_type } = req.body;
   if (!net_name) return res.status(400).json({ error: 'Net name required' });
-  const result = queries.createSession.run(net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, req.session.userId);
-  const sid = result.lastInsertRowid;
-  if (incident_name) db.prepare('UPDATE net_sessions SET incident_name = ? WHERE id = ?').run(incident_name, sid);
-  if (activation_type) db.prepare('UPDATE net_sessions SET activation_type = ? WHERE id = ?').run(activation_type, sid);
-  res.json({ session: queries.getSessionById.get(sid), checkins: [] });
-  if (URGENT_ACTIVATION_TYPES.includes(activation_type)) {
-    sendSmsToOptedInMembers(
-      `Clay ARES: ${activation_type} - "${net_name}" is now open. NC: ${nc_callsign || 'TBD'}. Details: ${APP_URL}`
+
+  const openSessions = queries.getOpenSessions.all();
+  const needsApproval = openSessions.length > 0 && !isNcOfAnyOpenSession(req.session.callsign, openSessions);
+
+  if (needsApproval) {
+    const result = queries.insertOpenRequest.run(
+      req.session.userId, req.session.callsign, net_name, frequency, mode, net_date, start_time,
+      nc_callsign, bnc_callsign, incident_name, activation_type
     );
+    return res.status(202).json({ pending: true, request: queries.getOpenRequestById.get(result.lastInsertRowid) });
   }
+
+  const session = createNetSession({ net_name, frequency, mode, net_date, start_time, nc_callsign, bnc_callsign, incident_name, activation_type }, req.session.userId);
+  res.json({ session, checkins: [] });
 });
 
+// The requester's own view of whether they have a request awaiting approval.
+app.get('/api/session/open-requests/mine', requireAuth, (req, res) => {
+  res.json(queries.getPendingOpenRequestByRequester.get(req.session.userId) || null);
+});
+
+// Requests the current user can act on - only pending requests filed while
+// they are the Net Control of a currently open session.
+app.get('/api/session/open-requests/to-approve', requireAuth, (req, res) => {
+  const openSessions = queries.getOpenSessions.all();
+  if (!isNcOfAnyOpenSession(req.session.callsign, openSessions)) return res.json([]);
+  res.json(queries.getAllPendingOpenRequests.all());
+});
+
+app.post('/api/session/open-requests/:id/approve', requireRole('netcontrol'), (req, res) => {
+  const request = queries.getOpenRequestById.get(req.params.id);
+  if (!request || request.status !== 'pending') return res.status(404).json({ error: 'No pending request' });
+  const openSessions = queries.getOpenSessions.all();
+  if (!isNcOfAnyOpenSession(req.session.callsign, openSessions)) return res.status(403).json({ error: 'Only the Net Control of a running net can approve this' });
+
+  const session = createNetSession(request, request.requested_by);
+  queries.resolveOpenRequest.run('approved', req.session.userId, req.session.callsign, session.id, request.id);
+  res.json({ session });
+});
+
+app.post('/api/session/open-requests/:id/deny', requireRole('netcontrol'), (req, res) => {
+  const request = queries.getOpenRequestById.get(req.params.id);
+  if (!request || request.status !== 'pending') return res.status(404).json({ error: 'No pending request' });
+  const openSessions = queries.getOpenSessions.all();
+  if (!isNcOfAnyOpenSession(req.session.callsign, openSessions)) return res.status(403).json({ error: 'Only the Net Control of a running net can deny this' });
+
+  queries.resolveOpenRequest.run('denied', req.session.userId, req.session.callsign, null, request.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/session/open-requests/:id/cancel', requireAuth, (req, res) => {
+  const request = queries.getOpenRequestById.get(req.params.id);
+  if (!request || request.status !== 'pending') return res.status(404).json({ error: 'No pending request' });
+  if (request.requested_by !== req.session.userId) return res.status(403).json({ error: 'Not your request' });
+
+  queries.resolveOpenRequest.run('cancelled', req.session.userId, req.session.callsign, null, request.id);
+  res.json({ ok: true });
+});
+
+// Only the net's own assigned Net Control (or an Admin) can close it, so a
+// net can't be ended by someone else who merely holds the netcontrol role -
+// e.g. a different NC checking the app for an unrelated net. A session with
+// no NC assigned yet has no one to defer to, so any netcontrol-role user may
+// close it.
 app.post('/api/session/:id/close', requireRole('netcontrol'), (req, res) => {
   const session = queries.getSessionById.get(req.params.id);
   if (!session || session.status !== 'open') return res.status(404).json({ error: 'No open session' });
+  const nc = (session.nc_callsign || '').trim();
+  if (!req.session.isAdmin && nc && !callsignMatchesNc(req.session.callsign, session)) {
+    return res.status(403).json({ error: `Only ${nc} (this net's Net Control) or an Admin can close this net.` });
+  }
   queries.closeSession.run(req.session.userId, session.id);
   res.json({ ok: true });
 });
