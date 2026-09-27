@@ -438,6 +438,52 @@ app.post('/api/users', requireAdmin, (req, res) => {
   }
 });
 
+// Bulk import - adds users from a roster (e.g. a club membership list). Any callsign
+// that already exists is left untouched and reported as skipped, so re-uploading the
+// same roster later (to pick up new members) is always safe to run again.
+app.post('/api/users/import', requireAdmin, (req, res) => {
+  const { users } = req.body;
+  if (!Array.isArray(users) || !users.length) return res.status(400).json({ error: 'No rows to import' });
+  const validRoles = ['netcontrol', 'backup', 'observer'];
+  const added = [], skipped = [], errors = [];
+  const isTruthy = v => ['1', 'true', 'yes', 'y'].includes(String(v || '').trim().toLowerCase());
+
+  users.forEach((row, i) => {
+    const rowNum = i + 1;
+    const callsign = String(row.callsign || '').trim().toUpperCase();
+    if (!callsign) { errors.push({ row: rowNum, error: 'Missing callsign' }); return; }
+    if (queries.getUserByCallsign.get(callsign)) { skipped.push({ callsign, reason: 'Already exists' }); return; }
+
+    const role = String(row.role || '').trim().toLowerCase() || 'observer';
+    if (!validRoles.includes(role)) { errors.push({ row: rowNum, callsign, error: `Invalid role "${row.role}"` }); return; }
+
+    try {
+      const tempPassword = crypto.randomBytes(9).toString('base64url');
+      const hash = bcrypt.hashSync(tempPassword, 10);
+      const email = String(row.email || '').trim() || null;
+      const full_name = String(row.full_name || '').trim() || null;
+      const result = queries.createUser.run(callsign, hash, role, email, full_name);
+      const id = result.lastInsertRowid;
+
+      const phone = String(row.phone || '').trim();
+      if (phone) queries.updateUserPhone.run(phone, id);
+      if (isTruthy(row.is_admin)) queries.updateUserAdminFlag.run(1, id);
+      if (isTruthy(row.sms_alerts)) queries.updateUserSmsAlerts.run(1, id);
+
+      if (row.positions) {
+        const positions = String(row.positions).split(';').map(p => p.trim()).filter(p => SCHED_POSITIONS.includes(p));
+        if (positions.length) setUserPositions(id, positions);
+      }
+
+      added.push({ callsign, email, role, tempPassword });
+    } catch (e) {
+      errors.push({ row: rowNum, callsign, error: e.message });
+    }
+  });
+
+  res.json({ added, skipped, errors });
+});
+
 app.put('/api/users/:id/password', requireAdmin, (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Password required' });

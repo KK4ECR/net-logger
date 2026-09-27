@@ -844,6 +844,22 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
           <div id="user-err" style="font-size:12px;color:var(--nc-red);margin-top:-8px;min-height:16px"></div>
         </div>
         <div class="panel">
+          <div class="panel-title"><i class="ti ti-file-import"></i> Bulk import users</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:.75rem">Upload a CSV to add a roster at once. Any callsign that already exists is left alone and reported as skipped — safe to re-run with an updated roster.</p>
+          <p style="font-size:12px;color:var(--muted);margin-bottom:1rem">
+            Columns: <code>callsign</code> (required) &middot; <code>full_name</code> &middot; <code>email</code> &middot;
+            <code>role</code> (netcontrol / backup / observer, default observer) &middot; <code>phone</code> &middot;
+            <code>is_admin</code> (yes/no) &middot; <code>sms_alerts</code> (yes/no) &middot;
+            <code>positions</code> (any of Net Control, Backup Net Control, Traffic Rep, Net Logger, separated by <code>;</code>).
+            Imported users get a random temporary password — anyone with an email on file can set their own via "Forgot password" instead.
+          </p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <input type="file" id="user-import-file" accept=".csv" onchange="handleUserImportFile(event)" />
+            <a href="data:text/csv;charset=utf-8,callsign%2Cfull_name%2Cemail%2Crole%2Cphone%2Cis_admin%2Csms_alerts%2Cpositions%0AW4XYZ%2CJane%20Doe%2Cjane%40example.com%2Cobserver%2C%2B13215551234%2Cno%2Cyes%2CNet%20Logger" download="user-import-template.csv" class="btn sm"><i class="ti ti-download"></i> Download template</a>
+          </div>
+          <div id="import-results" style="margin-top:14px"></div>
+        </div>
+        <div class="panel">
           <div class="panel-title"><i class="ti ti-users"></i> User accounts</div>
           <div id="user-table-wrap"><div class="empty-state"><i class="ti ti-users"></i>Loading...</div></div>
         </div>
@@ -1997,6 +2013,74 @@ async function createUser() {
     loadUsers();
     boot();
   } catch (e) { err.textContent = e.message; }
+}
+
+function parseUsersCsv(text) {
+  const rows = [];
+  let field = '', row = [], inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\r') { /* skip */ }
+    else if (c === '\n') { row.push(field); field = ''; rows.push(row); row = []; }
+    else field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ''));
+}
+
+async function handleUserImportFile(event) {
+  const file = event.target.files[0];
+  const resultsEl = document.getElementById('import-results');
+  if (!file) return;
+  resultsEl.innerHTML = '<div class="empty-state"><i class="ti ti-loader-2"></i>Reading file...</div>';
+  try {
+    const text = await file.text();
+    const rows = parseUsersCsv(text);
+    if (rows.length < 2) throw new Error('CSV has a header row but no data rows.');
+    const headers = rows[0].map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+    if (!headers.includes('callsign')) throw new Error('CSV must have a "callsign" column.');
+    const users = rows.slice(1).map(r => {
+      const obj = {};
+      headers.forEach((h, idx) => { obj[h] = (r[idx] || '').trim(); });
+      return obj;
+    });
+    const result = await api('POST', '/users/import', { users });
+    renderImportResults(result);
+    loadUsers();
+  } catch (e) {
+    resultsEl.innerHTML = `<div class="empty-state" style="color:var(--nc-red)"><i class="ti ti-alert-circle"></i>${e.message}</div>`;
+  } finally {
+    event.target.value = '';
+  }
+}
+
+function renderImportResults(result) {
+  const { added, skipped, errors } = result;
+  const el = document.getElementById('import-results');
+  let html = `<div style="font-size:13px;margin-bottom:8px"><strong>${added.length}</strong> added &nbsp;&middot;&nbsp; <strong>${skipped.length}</strong> skipped (already existed) &nbsp;&middot;&nbsp; <strong>${errors.length}</strong> error${errors.length === 1 ? '' : 's'}</div>`;
+  if (added.length) {
+    html += `<div style="overflow-x:auto"><table class="admin-table"><thead><tr><th>Callsign</th><th>Email</th><th>Role</th><th>Temp password</th></tr></thead><tbody>` +
+      added.map(a => `<tr>
+        <td style="font-family:monospace;font-weight:700">${a.callsign}</td>
+        <td style="font-size:12px">${a.email || '<span style="color:var(--muted)">none</span>'}</td>
+        <td>${ROLES[a.role] || a.role}</td>
+        <td style="font-family:monospace;font-size:12px">${a.tempPassword}</td>
+      </tr>`).join('') + `</tbody></table></div>
+      <p style="font-size:12px;color:var(--muted);margin-top:6px">Copy this list somewhere safe now — passwords are not shown again. Anyone with an email on file can set their own via "Forgot password" on the login screen instead.</p>`;
+  }
+  if (skipped.length) {
+    html += `<p style="font-size:12px;color:var(--muted);margin-top:10px">Skipped (already existed): ${skipped.map(s => s.callsign).join(', ')}</p>`;
+  }
+  if (errors.length) {
+    html += `<p style="font-size:12px;color:var(--nc-red);margin-top:10px">Errors:</p><ul style="font-size:12px;color:var(--nc-red)">` +
+      errors.map(e => `<li>Row ${e.row}${e.callsign ? ' (' + e.callsign + ')' : ''}: ${e.error}</li>`).join('') + `</ul>`;
+  }
+  el.innerHTML = html;
 }
 
 async function resetPassword(id, call) {
