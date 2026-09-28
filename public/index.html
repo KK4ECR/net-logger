@@ -865,6 +865,17 @@ input[type="checkbox"]{width:15px;height:15px;accent-color:var(--nc-green);curso
         </div>
 
         <div class="panel">
+          <div class="panel-title"><i class="ti ti-mail"></i> Email all users</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Builds a comma-separated list of every user's email on file, ready to paste into the BCC field of your email program.</p>
+          <button class="btn primary" onclick="buildEmailList()"><i class="ti ti-mail"></i> Build email list</button>
+          <div id="email-list-count" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+          <div id="email-list-output-wrap" style="display:none;margin-top:10px">
+            <textarea id="email-list-output" readonly rows="4" style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);resize:vertical" onclick="this.select()"></textarea>
+            <button class="btn sm" onclick="copyEmailList()" style="margin-top:8px"><i class="ti ti-copy"></i> Copy to clipboard</button>
+          </div>
+        </div>
+
+        <div class="panel">
           <div class="panel-title"><i class="ti ti-layout-list"></i> Tactical position presets</div>
           <p style="font-size:13px;color:var(--muted);margin-bottom:1rem">Save named sets of tactical positions for each activation type. When you open a net, you can load the matching preset to pre-populate the tactical call dropdown.</p>
           <div style="display:grid;grid-template-columns:1fr 160px 1fr auto;gap:8px;align-items:end;margin-bottom:1rem">
@@ -1870,6 +1881,39 @@ async function loadUsers() {
       </tr>`).join('')}</tbody>
     </table></div>`;
   } catch (e) {}
+}
+
+async function buildEmailList() {
+  const countEl = document.getElementById('email-list-count');
+  const wrap = document.getElementById('email-list-output-wrap');
+  countEl.textContent = 'Loading...';
+  try {
+    const users = await api('GET', '/users');
+    const emails = Array.from(new Set(users.map(u => (u.email || '').trim()).filter(Boolean)));
+    if (!emails.length) {
+      countEl.textContent = 'No users have an email on file.';
+      wrap.style.display = 'none';
+      return;
+    }
+    countEl.textContent = `${emails.length} of ${users.length} users have an email on file.`;
+    const output = document.getElementById('email-list-output');
+    output.value = emails.join(', ');
+    wrap.style.display = 'block';
+    output.select();
+  } catch (e) {
+    countEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function copyEmailList() {
+  const output = document.getElementById('email-list-output');
+  try {
+    await navigator.clipboard.writeText(output.value);
+    showToast('Copied to clipboard', 'green');
+  } catch (e) {
+    output.select();
+    showToast('Could not copy automatically — text is selected, press Ctrl+C', 'amber');
+  }
 }
 
 async function downloadBackup() {
