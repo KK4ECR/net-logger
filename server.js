@@ -10,7 +10,9 @@ const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckin
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const nodemailer = require('nodemailer');
+const GMAIL_USER = process.env.GMAIL_USER || 'kk4ecr@gmail.com';
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
 const activeUsers = new Map(); // userId -> { callsign, role, lastSeen }
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
 const APP_URL = process.env.APP_URL || 'https://your-app.railway.app';
@@ -60,39 +62,42 @@ const SCHED_POSITIONS = ['Net Control', 'Backup Net Control', 'Traffic Rep', 'Ne
 // ─── EMAIL ───────────────────────────────────────────────────────────────────
 const ROLES_DISPLAY = { netcontrol: 'Net Control', backup: 'Backup Net Control', observer: 'Observer' };
 
+// Sends through Gmail SMTP. GMAIL_APP_PASSWORD must be a Google "app password"
+// (requires 2-Step Verification), not the normal account password.
+const mailer = GMAIL_APP_PASSWORD ? nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 30000
+}) : null;
+const EMAIL_FROM = `"Clay ARES Net Logger" <${GMAIL_USER}>`;
+
 async function sendEmail(to, subject, html) {
-  if (!RESEND_API_KEY) { console.log('RESEND_API_KEY not set, skipping email to', to); return; }
+  if (!mailer) { console.log('GMAIL_APP_PASSWORD not set, skipping email to', to); return { ok: false, error: 'Email not configured' }; }
   try {
-    const r = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: 'Clay ARES Net Logger <noreply@resend.dev>', to: [to], subject, html })
-    });
-    const data = await r.json();
-    if (!r.ok) console.error('Resend error:', data);
-    else console.log('Email sent to', to, '- id:', data.id);
-  } catch(e) { console.error('Email send failed:', e.message); }
+    const info = await mailer.sendMail({ from: EMAIL_FROM, to, subject, html });
+    console.log('Email sent to', to, '- id:', info.messageId);
+    return { ok: true };
+  } catch(e) {
+    console.error('Email send failed to', to, '-', e.code || '', e.message);
+    return { ok: false, error: e.message };
+  }
 }
 
 // Same as sendEmail but supports a PDF (or other file) attachment, base64-encoded
 async function sendEmailWithAttachment(to, subject, html, attachment) {
-  if (!RESEND_API_KEY) { console.log('RESEND_API_KEY not set, skipping email with attachment to', to); return { ok: false, error: 'Email not configured' }; }
+  if (!mailer) { console.log('GMAIL_APP_PASSWORD not set, skipping email with attachment to', to); return { ok: false, error: 'Email not configured' }; }
   try {
-    const body = { from: 'Clay ARES Net Logger <noreply@resend.dev>', to: [to], subject, html };
-    if (attachment) {
-      body.attachments = [{ filename: attachment.filename, content: attachment.base64 }];
-    }
-    const r = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await r.json();
-    if (!r.ok) { console.error('Resend error:', data); return { ok: false, error: data.message || 'Send failed' }; }
-    console.log('Email with attachment sent to', to, '- id:', data.id);
+    const mail = { from: EMAIL_FROM, to, subject, html };
+    if (attachment) mail.attachments = [{ filename: attachment.filename, content: attachment.base64, encoding: 'base64' }];
+    const info = await mailer.sendMail(mail);
+    console.log('Email with attachment sent to', to, '- id:', info.messageId);
     return { ok: true };
   } catch(e) {
-    console.error('Email with attachment send failed:', e.message);
+    console.error('Email with attachment send failed to', to, '-', e.code || '', e.message);
     return { ok: false, error: e.message };
   }
 }

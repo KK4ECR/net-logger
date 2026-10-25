@@ -143,7 +143,7 @@ On the **Setup** page, enter your QRZ XML username and password (a separate subs
 
 1. Push this repo to GitHub.
 2. Railway → **New Project → Deploy from GitHub repo**.
-3. Set environment variables: `SESSION_SECRET` (any long random string), `DB_PATH=/app/data/netlogger.db`, `PORT=3000`. Optional, for email: `RESEND_API_KEY`, `ADMIN_EMAIL`, `APP_URL`.
+3. Set environment variables: `SESSION_SECRET` (any long random string), `DB_PATH=/app/data/netlogger.db`, `PORT=3000`. Optional, for email (sent through Gmail SMTP): `GMAIL_APP_PASSWORD` (a Google app password for the sending account — create one at myaccount.google.com/apppasswords, which requires 2-Step Verification), `GMAIL_USER` (defaults to `kk4ecr@gmail.com`), `ADMIN_EMAIL`, `APP_URL`.
 4. Add a **Volume** mounted at `/app/data` so the database survives redeploys.
 5. Every push to `main` auto-redeploys.
 
