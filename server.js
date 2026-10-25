@@ -10,9 +10,8 @@ const { db, queries, schedQueries, resetQueries, settingsQueries, getFullCheckin
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const nodemailer = require('nodemailer');
-const GMAIL_USER = process.env.GMAIL_USER || 'kk4ecr@gmail.com';
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'kk4ecr@gmail.com';
 const activeUsers = new Map(); // userId -> { callsign, role, lastSeen }
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
 const APP_URL = process.env.APP_URL || 'https://your-app.railway.app';
@@ -62,45 +61,29 @@ const SCHED_POSITIONS = ['Net Control', 'Backup Net Control', 'Traffic Rep', 'Ne
 // ─── EMAIL ───────────────────────────────────────────────────────────────────
 const ROLES_DISPLAY = { netcontrol: 'Net Control', backup: 'Backup Net Control', observer: 'Observer' };
 
-// Sends through Gmail SMTP. GMAIL_APP_PASSWORD must be a Google "app password"
-// (requires 2-Step Verification), not the normal account password.
-const mailer = GMAIL_APP_PASSWORD ? nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
-  connectionTimeout: 15000,
-  greetingTimeout: 15000,
-  socketTimeout: 30000
-}) : null;
-const EMAIL_FROM = `"Clay ARES Net Logger" <${GMAIL_USER}>`;
-
-async function sendEmail(to, subject, html) {
-  if (!mailer) { console.log('GMAIL_APP_PASSWORD not set, skipping email to', to); return { ok: false, error: 'Email not configured' }; }
+// Sends through Brevo's HTTPS API (Railway blocks outbound SMTP on most plans).
+async function brevoSend(to, subject, html, attachment) {
+  if (!BREVO_API_KEY) { console.log('BREVO_API_KEY not set, skipping email to', to); return { ok: false, error: 'Email not configured' }; }
   try {
-    const info = await mailer.sendMail({ from: EMAIL_FROM, to, subject, html });
-    console.log('Email sent to', to, '- id:', info.messageId);
+    const body = { sender: { name: 'Clay ARES Net Logger', email: BREVO_SENDER_EMAIL }, to: [{ email: to }], subject, htmlContent: html };
+    if (attachment) body.attachment = [{ name: attachment.filename, content: attachment.base64 }];
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { console.error('Brevo error sending to', to, '-', r.status, data.code || '', data.message || ''); return { ok: false, error: data.message || 'Send failed' }; }
+    console.log('Email sent to', to, '- id:', data.messageId);
     return { ok: true };
   } catch(e) {
-    console.error('Email send failed to', to, '-', e.code || '', e.message);
+    console.error('Email send failed to', to, '-', e.message);
     return { ok: false, error: e.message };
   }
 }
 
-// Same as sendEmail but supports a PDF (or other file) attachment, base64-encoded
-async function sendEmailWithAttachment(to, subject, html, attachment) {
-  if (!mailer) { console.log('GMAIL_APP_PASSWORD not set, skipping email with attachment to', to); return { ok: false, error: 'Email not configured' }; }
-  try {
-    const mail = { from: EMAIL_FROM, to, subject, html };
-    if (attachment) mail.attachments = [{ filename: attachment.filename, content: attachment.base64, encoding: 'base64' }];
-    const info = await mailer.sendMail(mail);
-    console.log('Email with attachment sent to', to, '- id:', info.messageId);
-    return { ok: true };
-  } catch(e) {
-    console.error('Email with attachment send failed to', to, '-', e.code || '', e.message);
-    return { ok: false, error: e.message };
-  }
-}
+const sendEmail = (to, subject, html) => brevoSend(to, subject, html);
+const sendEmailWithAttachment = (to, subject, html, attachment) => brevoSend(to, subject, html, attachment);
 
 // ─── SMS (TWILIO) ──────────────────────────────────────────────────────────────
 // Optional, same pattern as email: no-ops with a log line if not configured, so
